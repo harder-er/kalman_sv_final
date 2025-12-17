@@ -127,45 +127,37 @@ end
 
 // █████ 数据通道控制（对应架构图）
 always_ff @(posedge clk) begin
-    if(rst_n) begin
-        a_reg <= '0;
-        b_reg <= '0;
-        partial_sum_reg <= '0;
-        sum_right <= '0;
-        data_ready <= '0;
+    if(!rst_n) begin
+        a_reg            <= '0;
+        b_reg            <= '0;
+        partial_sum_reg  <= '0;
+        sum_right        <= '0;
+        data_ready       <= '0;
+        a_out            <= '0;
+        b_out            <= '0;
     end else begin
         case(current_state)
             INIT: begin
                 a_reg <= a_in;
                 b_reg <= b_in;
             end
-            
-            MUL: begin
-                if(mul_finish)
-                    partial_sum_reg <= partial_sum;
-            end
-            
-            ADD: begin
-                if(add_finish)
-                    sum_right <= sum_temp;
-            end
-            
+            MUL: if(mul_finish) partial_sum_reg <= partial_sum;
+            ADD: if(add_finish) sum_right <= sum_temp;
             SEND_DATA: begin
                 data_ready <= 1'b1;
                 a_out <= a_reg;
                 b_out <= b_reg;
             end
-            
             DATA_THROUGH: begin
                 a_out <= a_in;
                 b_out <= b_in;
                 sum_right <= sum_down;
             end
-            
             default: data_ready <= 1'b0;
         endcase
     end
 end
+
 
 // █████ 控制信号生成（精确时序控制）
 assign mul_start = (current_state == MUL);
