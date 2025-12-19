@@ -349,123 +349,119 @@ CEU_alpha u_CEU_alpha3 (
     .out        (alpha3     ),          // 输出行列式值α
     .valid_out  (valid_out3 )
 );
-logic valid_div,finish_div11, finish_div12, finish_div13;
+logic valid_div;
 assign valid_div = valid & valid_out1 & valid_out2 & valid_out3; 
 // ================== 第三计算阶段：逆矩阵元素计算 ==================
-// 计算1/α（行列式倒数）
-CEU_division u_CEU_div11 (
-    .clk        (   clk             ),
-    .valid      (   valid_div       ),
-    .finish     (   finish_div11    ),
-    .numerator  (   a               ),     // 分子项（组合中间结果）
-    .denominator(   alpha1          ),         // 分母项（行列式值）
-    .quotient   (   inv_alpha11     )      // 输出倒数结果1/α
+// 计算1/α（行列式倒数）——单个除法IP串行复用 9 次
+typedef enum logic [1:0] {DIV_IDLE, DIV_BUSY} div_state_e;
+div_state_e div_state;
+logic [3:0] div_idx;
+logic div_go, div_finish;
+logic [DWIDTH-1:0] div_num, div_den, div_q;
+
+CEU_division u_CEU_div_shared (
+    .clk        (clk),
+    .valid      (div_go),
+    .finish     (div_finish),
+    .numerator  (div_num),
+    .denominator(div_den),
+    .quotient   (div_q)
 );
 
-CEU_division u_CEU_div12 (
-    .clk        (   clk             ),
-    .valid      (   valid_div       ),
-    .finish     (   finish_div12    ),
-    .numerator  (   d               ),     // 分子项（组合中间结果）
-    .denominator(   alpha1          ),         // 分母项（行列式值）
-    .quotient   (   inv_alpha12     )      // 输出倒数结果1/α
-);
+// 结果收集标志
+logic all_div_done;
 
-CEU_division u_CEU_div13 (
-    .clk        (   clk             ),
-    .valid      (   valid_div       ),
-    .finish     (   finish_div13    ),
-    .numerator  (   x               ),     // 分子项（组合中间结果）
-    .denominator(   alpha1          ),         // 分母项（行列式值）
-    .quotient   (   inv_alpha13     )      // 输出倒数结果1/α
-);
-logic fpsub13_finish,valid_fpsub13;
-assign fpsub13_valid = finish_div11 & finish_div12 & finish_div13;
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        div_state    <= DIV_IDLE;
+        div_idx      <= '0;
+        div_go       <= 1'b0;
+        all_div_done <= 1'b0;
+        {inv_alpha11, inv_alpha12, inv_alpha13,
+         inv_alpha21, inv_alpha22, inv_alpha23,
+         inv_alpha31, inv_alpha32, inv_alpha33} <= '{default:'0};
+    end else begin
+        div_go       <= 1'b0;
+        all_div_done <= 1'b0;
+
+        case (div_state)
+            DIV_IDLE: begin
+                div_idx <= '0;
+                if (valid_div) begin
+                    div_num <= a;      div_den <= alpha1; div_go <= 1'b1; div_state <= DIV_BUSY;
+                end
+            end
+
+            DIV_BUSY: begin
+                if (div_finish) begin
+                    case (div_idx)
+                        4'd0: inv_alpha11 <= div_q;
+                        4'd1: inv_alpha12 <= div_q;
+                        4'd2: inv_alpha13 <= div_q;
+                        4'd3: inv_alpha21 <= div_q;
+                        4'd4: inv_alpha22 <= div_q;
+                        4'd5: inv_alpha23 <= div_q;
+                        4'd6: inv_alpha31 <= div_q;
+                        4'd7: inv_alpha32 <= div_q;
+                        4'd8: inv_alpha33 <= div_q;
+                        default: ;
+                    endcase
+
+                    if (div_idx == 4'd8) begin
+                        div_state    <= DIV_IDLE;
+                        all_div_done <= 1'b1;
+                    end else begin
+                        div_idx <= div_idx + 1'b1;
+                        case (div_idx + 1'b1)
+                            4'd1: begin div_num <= d; div_den <= alpha1; end
+                            4'd2: begin div_num <= x; div_den <= alpha1; end
+                            4'd3: begin div_num <= b; div_den <= alpha2; end
+                            4'd4: begin div_num <= e; div_den <= alpha2; end
+                            4'd5: begin div_num <= y; div_den <= alpha2; end
+                            4'd6: begin div_num <= c; div_den <= alpha3; end
+                            4'd7: begin div_num <= f; div_den <= alpha3; end
+                            4'd8: begin div_num <= z; div_den <= alpha3; end
+                            default: begin div_num <= '0; div_den <= '0; end
+                        endcase
+                        div_go <= 1'b1;
+                    end
+                end
+            end
+        endcase
+    end
+end
+
+// 三个 -x/-y/-z 的符号翻转在除法完成后统一触发
+logic fpsub13_finish,fpsub23_finish,fpsub33_finish;
+assign fpsub13_valid = all_div_done;
+assign fpsub23_valid = all_div_done;
+assign fpsub33_valid = all_div_done;
+
 fp_suber u_fp_suber_x (
     .clk        (clk            ),
     .valid      (fpsub13_valid  ),
     .finish     (fpsub13_finish ),
-    .a          (64'h0          ),     // 分子项（组合中间结果）
-    .b          (inv_alpha13    ),         // 分母项（行列式值）
-    .result     (_inv_alpha13   )      // 输出倒数结果1/α
+    .a          (64'h0          ),
+    .b          (inv_alpha13    ),
+    .result     (_inv_alpha13   )
 );
 
-logic finish_div21, finish_div22, finish_div23;
-
-CEU_division u_CEU_div21 (
-    .clk        (clk            ),
-    .valid      (valid_div      ),
-    .finish     (finish_div21   ),
-    .numerator  (b              ),     // 分子项（组合中间结果）
-    .denominator(alpha2         ),         // 分母项（行列式值）
-    .quotient   (inv_alpha21    )      // 输出倒数结果1/α
-);
-
-CEU_division u_CEU_div22 (
-    .clk        (clk            ),
-    .valid      (valid_div      ),
-    .finish     (finish_div22   ),
-    .numerator  (e              ),     // 分子项（组合中间结果）
-    .denominator(alpha2         ),         // 分母项（行列式值）
-    .quotient   (inv_alpha22    )      // 输出倒数结果1/α
-);
-
-CEU_division u_CEU_div23 (
-    .clk        (clk            ),
-    .valid      (valid_div      ),
-    .finish     (finish_div23   ),
-    .numerator  (y              ),     // 分子项（组合中间结果）
-    .denominator(alpha2         ),         // 分母项（行列式值）
-    .quotient   (inv_alpha23    )      // 输出倒数结果1/α
-);
-
-logic fpsub23_finish,valid_fpsub23;
-assign fpsub23_valid = finish_div21 & finish_div22 & finish_div23;
 fp_suber u_fp_suber_y (
     .clk        (clk            ),
     .valid      (fpsub23_valid  ),
     .finish     (fpsub23_finish ),
-    .a          (64'h0          ),     // 分子项（组合中间结果）
-    .b          (inv_alpha23    ),         // 分母项（行列式值）
-    .result     (_inv_alpha23   )      // 输出倒数结果1/α
+    .a          (64'h0          ),
+    .b          (inv_alpha23    ),
+    .result     (_inv_alpha23   )
 );
 
-logic finish_div31, finish_div32, finish_div33;
-CEU_division u_CEU_div31 (
-    .clk        (clk            ),
-    .valid      (valid_div      ),
-    .finish     (finish_div31   ),
-    .numerator  (c              ),     // 分子项（组合中间结果）
-    .denominator(alpha3         ),         // 分母项（行列式值）
-    .quotient   (inv_alpha31    )      // 输出倒数结果1/α
-);
-
-CEU_division u_CEU_div32 (
-    .clk        (clk            ),
-    .valid      (valid_div      ),
-    .finish     (finish_div32   ),
-    .numerator  (f              ),     // 分子项（组合中间结果）
-    .denominator(alpha3         ),         // 分母项（行列式值）
-    .quotient   (inv_alpha32    )      // 输出倒数结果1/α
-);
-
-CEU_division u_CEU_div33 (
-    .clk        (clk            ),
-    .valid      (valid_div      ),
-    .finish     (finish_div33   ),
-    .numerator  (z              ),     // 分子项（组合中间结果）
-    .denominator(alpha3         ),         // 分母项（行列式值）
-    .quotient   (inv_alpha33    )      // 输出倒数结果1/α
-);
-logic fpsub33_finish,valid_fpsub33;
-assign fpsub33_valid = finish_div31 & finish_div32 & finish_div33;
 fp_suber u_fp_suber_z (
     .clk        (clk            ),
     .valid      (fpsub33_valid  ),
     .finish     (fpsub33_finish ),
-    .a          (64'h0          ),     // 分子项（组合中间结果）
-    .b          (inv_alpha33    ),         // 分母项（行列式值）
-    .result     (_inv_alpha33   )      // 输出倒数结果1/α
+    .a          (64'h0          ),
+    .b          (inv_alpha33    ),
+    .result     (_inv_alpha33   )
 );
 // ================== 输出阶段：逆矩阵元素合成 ==================
 // 计算逆矩阵第一行第一列元素：(d*e - y^2?)/α

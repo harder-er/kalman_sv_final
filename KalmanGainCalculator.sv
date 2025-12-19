@@ -922,7 +922,7 @@ module KalmanGainCalculator #(
                             mul_go  <= 1'b1;
                             k_state <= K_MUL;
                         end
-                    } else begin
+                    end else begin
                         col_idx <= col_idx + 1'b1;
                         // 启动同一行下一列乘法
                         mul_a   <= P_predicted_HT12[row_idx][0];

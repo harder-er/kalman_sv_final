@@ -1,126 +1,129 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Module Name: CMU_PHi41
-// Description: PHi41 通道的 CMU 计算，四级流水计算  
-//              a = (Θ10,1 + Q10,1) + (Δt·Θ10,4 + ½·Δt²·Θ10,7 + ⅙·Δt³·Θ10,10)
-// Dependencies: fp_multiplier, fp_adder
+// Shared 2-mul + 2-add FSM version (PHi41)
 //////////////////////////////////////////////////////////////////////////////////
 module CMU_PHi41 #(
     parameter DBL_WIDTH = 64
 )(
     input  logic                   clk,
     input  logic                   rst_n,
-    // —— 动态输入 —— 
+    // 输入
     input  logic [DBL_WIDTH-1:0]   Theta_10_1,
     input  logic [DBL_WIDTH-1:0]   Theta_10_4,
     input  logic [DBL_WIDTH-1:0]   Theta_10_7,
     input  logic [DBL_WIDTH-1:0]   Theta_10_10,
     input  logic [DBL_WIDTH-1:0]   Q_10_1,
-    // —— 时间参数 —— 
-    input  logic [DBL_WIDTH-1:0]   delta_t,      // Δt
-    input  logic [DBL_WIDTH-1:0]   half_dt2,     // ½·Δt²
-    input  logic [DBL_WIDTH-1:0]   sixth_dt3,    // ⅙·Δt³
-    // —— 输出 —— 
+    // 时间参数
+    input  logic [DBL_WIDTH-1:0]   delta_t,
+    input  logic [DBL_WIDTH-1:0]   half_dt2,
+    input  logic [DBL_WIDTH-1:0]   sixth_dt3,
+    // 输出
     output logic [DBL_WIDTH-1:0]   a,
     output logic                   valid_out
 );
 
-    // 中间信号
-    logic [DBL_WIDTH-1:0] X1, X2, X3;
-    logic [DBL_WIDTH-1:0] T1, T2, T3;
+    // 2 路乘 + 2 路加共享单元
+    logic mul_go [0:1], mul_finish [0:1];
+    logic [DBL_WIDTH-1:0] mul_a [0:1], mul_b [0:1], mul_r [0:1];
+    logic add_go [0:1], add_finish [0:1];
+    logic [DBL_WIDTH-1:0] add_a [0:1], add_b [0:1], add_r [0:1];
 
-    // valid/finish signals
-    logic multX_valid;
-    logic finish_X1, finish_X2, finish_X3;
-    logic addT_valid;
-    logic finish_T1, finish_T2, finish_T3;
-    logic final_valid, finish_final;
+    fp_multiplier u_mul0 (.clk(clk), .valid(mul_go[0]), .finish(mul_finish[0]), .a(mul_a[0]), .b(mul_b[0]), .result(mul_r[0]));
+    fp_multiplier u_mul1 (.clk(clk), .valid(mul_go[1]), .finish(mul_finish[1]), .a(mul_a[1]), .b(mul_b[1]), .result(mul_r[1]));
+    fp_adder      u_add0 (.clk(clk), .valid(add_go[0]), .finish(add_finish[0]), .a(add_a[0]), .b(add_b[0]), .result(add_r[0]));
+    fp_adder      u_add1 (.clk(clk), .valid(add_go[1]), .finish(add_finish[1]), .a(add_a[1]), .b(add_b[1]), .result(add_r[1]));
 
-    // pipeline regs (unchanged)
-    logic [DBL_WIDTH-1:0] stage1_X1, stage1_X2, stage1_X3, stage1_T1;
-    logic [DBL_WIDTH-1:0] stage2_T2;
-    logic [DBL_WIDTH-1:0] stage3_T3;
-    logic [3:0]           valid_pipe;
+    // 中间寄存器
+    logic [DBL_WIDTH-1:0] a1;
+    logic [DBL_WIDTH-1:0] x1, x2, x3;
+    logic [DBL_WIDTH-1:0] t1, t2;
 
-    // ----------------- Stage1: multipliers X1, X2, X3 -----------------
-    assign multX_valid = 1'b1;
-    fp_multiplier U_mul_X1 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X1),
-        .a      (delta_t),
-        .b      (Theta_10_4),
-        .result (X1)
-    );
-    fp_multiplier U_mul_X2 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X2),
-        .a      (half_dt2),
-        .b      (Theta_10_7),
-        .result (X2)
-    );
-    fp_multiplier U_mul_X3 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X3),
-        .a      (sixth_dt3),
-        .b      (Theta_10_10),
-        .result (X3)
-    );
+    typedef enum logic [2:0] {
+        S_IDLE,
+        S_A1,
+        S_X12, S_X3,
+        S_T1T2, S_FINAL
+    } state_e;
 
-    // ----------------- Stage2: adder T1, T2 -----------------
-    assign addT_valid = finish_X1 & finish_X2 & finish_X3;
-    fp_adder U_add_T1 (
-        .clk    (clk),
-        .valid  (addT_valid),
-        .finish (finish_T1),
-        .a      (Theta_10_1),
-        .b      (Q_10_1),
-        .result (T1)
-    );
-    fp_adder U_add_T2 (
-        .clk    (clk),
-        .valid  (addT_valid & finish_T1),
-        .finish (finish_T2),
-        .a      (X1),
-        .b      (X2),
-        .result (T2)
-    );
+    state_e state;
+    logic done_pipe;
 
-    // ----------------- Stage3: adder T3 -----------------
-    fp_adder U_add_T3 (
-        .clk    (clk),
-        .valid  (addT_valid),
-        .finish (finish_T3),
-        .a      (T1),
-        .b      (T2),
-        .result (T3)
-    );
-
-    // ----------------- Stage4: final a = T3 + X3 -----------------
-    assign final_valid = finish_T3 & finish_X3;
-    fp_adder U_add_final (
-        .clk    (clk),
-        .valid  (final_valid),
-        .finish (finish_final),
-        .a      (T3),
-        .b      (X3),
-        .result (a)
-    );
-
-    // ----------------- pipeline registers & valid pipe -----------------
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            
-            valid_pipe  <= 4'b0000;
+            state <= S_IDLE;
+            {mul_go[0], mul_go[1], add_go[0], add_go[1]} <= 4'b0;
+            {a1,x1,x2,x3,t1,t2,a} <= '{default:'0};
+            done_pipe <= 1'b0;
         end else begin
-            
-            // valid pipeline shift in finish_final
-            valid_pipe  <= { valid_pipe[2:0], finish_final };
+            {mul_go[0], mul_go[1], add_go[0], add_go[1]} <= 4'b0;
+            done_pipe <= 1'b0;
+
+            case (state)
+                S_IDLE: begin
+                    // A1 = Theta_10_1 + Q_10_1
+                    add_a[0] <= Theta_10_1; add_b[0] <= Q_10_1;
+                    add_go[0] <= 1'b1;
+                    state <= S_A1;
+                end
+
+                S_A1: begin
+                    if (add_finish[0]) begin
+                        a1 <= add_r[0];
+                        // X1 = delta_t * Theta_10_4, X2 = half_dt2 * Theta_10_7
+                        mul_a[0] <= delta_t;  mul_b[0] <= Theta_10_4;
+                        mul_a[1] <= half_dt2; mul_b[1] <= Theta_10_7;
+                        mul_go[0] <= 1'b1; mul_go[1] <= 1'b1;
+                        state <= S_X12;
+                    end
+                end
+
+                S_X12: begin
+                    if (mul_finish[0]) x1 <= mul_r[0];
+                    if (mul_finish[1]) x2 <= mul_r[1];
+                    if (mul_finish[0] && mul_finish[1]) begin
+                        // X3 = sixth_dt3 * Theta_10_10
+                        mul_a[0] <= sixth_dt3; mul_b[0] <= Theta_10_10;
+                        mul_go[0] <= 1'b1;
+                        state <= S_X3;
+                    end
+                end
+
+                S_X3: begin
+                    if (mul_finish[0]) begin
+                        x3 <= mul_r[0];
+                        // T1 = a1 + x1, T2 = x2 + x3
+                        add_a[0] <= a1; add_b[0] <= x1;
+                        add_a[1] <= x2; add_b[1] <= x3;
+                        add_go[0] <= 1'b1; add_go[1] <= 1'b1;
+                        state <= S_T1T2;
+                    end
+                end
+
+                S_T1T2: begin
+                    if (add_finish[0]) t1 <= add_r[0];
+                    if (add_finish[1]) t2 <= add_r[1];
+                    if (add_finish[0] && add_finish[1]) begin
+                        // a = t1 + t2
+                        add_a[0] <= t1; add_b[0] <= t2;
+                        add_go[0] <= 1'b1;
+                        state <= S_FINAL;
+                    end
+                end
+
+                S_FINAL: begin
+                    if (add_finish[0]) begin
+                        a <= add_r[0];
+                        done_pipe <= 1'b1;
+                        state <= S_IDLE;
+                    end
+                end
+            endcase
         end
     end
 
-    assign valid_out = valid_pipe[3]&final_valid;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) valid_out <= 1'b0;
+        else        valid_out <= done_pipe;
+    end
 
 endmodule

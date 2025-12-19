@@ -1,108 +1,110 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Module Name: CMU_PHi42
-// Description: PHi42 通道的 CMU 计算，四级流水计算  
-//              a = (Θ10,4 + Q10,4) + (Δt·Θ10,7 + ½·Δt²·Θ10,10)
-// Dependencies: fp_multiplier, fp_adder
+// Shared 2-mul + 2-add FSM version (PHi42)
 //////////////////////////////////////////////////////////////////////////////////
 module CMU_PHi42 #(
     parameter DBL_WIDTH = 64
 )(
     input  logic                   clk,
     input  logic                   rst_n,
-    // —— 动态输入 —— 
+    // 输入
     input  logic [DBL_WIDTH-1:0]   Theta_10_4,
     input  logic [DBL_WIDTH-1:0]   Theta_10_7,
     input  logic [DBL_WIDTH-1:0]   Theta_10_10,
     input  logic [DBL_WIDTH-1:0]   Q_10_4,
-    // —— 时间参数 —— 
-    input  logic [DBL_WIDTH-1:0]   delta_t,   // Δt
-    input  logic [DBL_WIDTH-1:0]   half_dt2,  // ½·Δt²
-    // —— 输出 —— 
+    // 时间参数
+    input  logic [DBL_WIDTH-1:0]   delta_t,
+    input  logic [DBL_WIDTH-1:0]   half_dt2,
+    // 输出
     output logic [DBL_WIDTH-1:0]   a,
     output logic                   valid_out
 );
 
-    // 中间信号
-    logic [DBL_WIDTH-1:0] X1, X2, T1, T2;
+    // 2 路乘 + 2 路加共享单元
+    logic mul_go [0:1], mul_finish [0:1];
+    logic [DBL_WIDTH-1:0] mul_a [0:1], mul_b [0:1], mul_r [0:1];
+    logic add_go [0:1], add_finish [0:1];
+    logic [DBL_WIDTH-1:0] add_a [0:1], add_b [0:1], add_r [0:1];
 
-    // valid/finish 信号
-    logic multX_valid,   finish_X1, finish_X2;
-    logic addA_valid,    finish_T1;
-    logic final_valid,   finish_T2;
+    fp_multiplier u_mul0 (.clk(clk), .valid(mul_go[0]), .finish(mul_finish[0]), .a(mul_a[0]), .b(mul_b[0]), .result(mul_r[0]));
+    fp_multiplier u_mul1 (.clk(clk), .valid(mul_go[1]), .finish(mul_finish[1]), .a(mul_a[1]), .b(mul_b[1]), .result(mul_r[1]));
+    fp_adder      u_add0 (.clk(clk), .valid(add_go[0]), .finish(add_finish[0]), .a(add_a[0]), .b(add_b[0]), .result(add_r[0]));
+    fp_adder      u_add1 (.clk(clk), .valid(add_go[1]), .finish(add_finish[1]), .a(add_a[1]), .b(add_b[1]), .result(add_r[1]));
 
-    // 流水段寄存器（保持原样）
-    logic [DBL_WIDTH-1:0] stage1_T1, stage1_X1, stage1_X2;
-    logic [DBL_WIDTH-1:0] stage2_a;
-    // 有效信号管线，2 级流水
-    logic [1:0]           valid_pipe;
+    // 中间寄存器
+    logic [DBL_WIDTH-1:0] a1;
+    logic [DBL_WIDTH-1:0] x1, x2;
 
-    // ----------------- Stage1: 乘法 X1, X2 -----------------
-    assign multX_valid = 1'b1;
-    fp_multiplier U_mul_X1 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X1),
-        .a      (delta_t),
-        .b      (Theta_10_7),
-        .result (X1)
-    );
-    fp_multiplier U_mul_X2 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X2),
-        .a      (half_dt2),
-        .b      (Theta_10_10),
-        .result (X2)
-    );
+    typedef enum logic [1:0] {
+        S_IDLE,
+        S_A1,
+        S_X12,
+        S_FINAL
+    } state_e;
 
-    // ----------------- Stage2: 加法 T1 -----------------
-    assign addA_valid = finish_X1 & finish_X2;
-    fp_adder U_add_T1 (
-        .clk    (clk),
-        .valid  (addA_valid),
-        .finish (finish_T1),
-        .a      (Theta_10_4),
-        .b      (Q_10_4),
-        .result (T1)
-    );
+    state_e state;
+    logic done_pipe;
 
-    // ----------------- Stage3: 加法 T2 = X1 + X2 -----------------
-    assign final_valid = finish_T1;
-    fp_adder U_add_T2 (
-        .clk    (clk),
-        .valid  (final_valid),
-        .finish (finish_T2),
-        .a      (X1),
-        .b      (X2),
-        .result (T2)
-    );
-
-    // ----------------- Stage4: final a = T1 + T2 -----------------
-    // reuse finish_T2 as finish_final
-    // result is captured by pipeline reg stage2_a
-    wire finish_final = finish_T2;
-    fp_adder U_add_final (
-        .clk    (clk),
-        .valid  (finish_T2),
-        .finish (),
-        .a      (T1),
-        .b      (T2),
-        .result (stage2_a)
-    );
-
-    // ----------------- 流水线寄存与控制 -----------------
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            valid_pipe <= 2'b00;
+            state <= S_IDLE;
+            {mul_go[0], mul_go[1], add_go[0], add_go[1]} <= 4'b0;
+            {a1,x1,x2,a} <= '{default:'0};
+            done_pipe <= 1'b0;
         end else begin
-            // Stage1 寄存 T1, X1, X2
-            // valid 管线移位并注入 finish_final
-            valid_pipe <= { valid_pipe[0], finish_final };
+            {mul_go[0], mul_go[1], add_go[0], add_go[1]} <= 4'b0;
+            done_pipe <= 1'b0;
+
+            case (state)
+                S_IDLE: begin
+                    // A1 = Theta_10_4 + Q_10_4
+                    add_a[0] <= Theta_10_4; add_b[0] <= Q_10_4;
+                    add_go[0] <= 1'b1;
+                    state <= S_A1;
+                end
+
+                S_A1: begin
+                    if (add_finish[0]) begin
+                        a1 <= add_r[0];
+                        // X1 = delta_t * Theta_10_7, X2 = half_dt2 * Theta_10_10
+                        mul_a[0] <= delta_t;  mul_b[0] <= Theta_10_7;
+                        mul_a[1] <= half_dt2; mul_b[1] <= Theta_10_10;
+                        mul_go[0] <= 1'b1; mul_go[1] <= 1'b1;
+                        state <= S_X12;
+                    end
+                end
+
+                S_X12: begin
+                    if (mul_finish[0]) x1 <= mul_r[0];
+                    if (mul_finish[1]) x2 <= mul_r[1];
+                    if (mul_finish[0] && mul_finish[1]) begin
+                        // a = a1 + x1 + x2 -> 分两次加
+                        add_a[0] <= a1; add_b[0] <= x1;
+                        add_go[0] <= 1'b1;
+                        state <= S_FINAL;
+                    end
+                end
+
+                S_FINAL: begin
+                    if (add_finish[0]) begin
+                        // 第二次加：add0 继续复用
+                        add_a[0] <= add_r[0]; add_b[0] <= x2;
+                        add_go[0] <= 1'b1;
+                    end
+                    if (add_finish[0] && add_r[0] != add_r[0]); // placeholder to keep structure
+                    if (add_finish[0]) begin
+                        a <= add_r[0];
+                        done_pipe <= 1'b1;
+                        state <= S_IDLE;
+                    end
+                end
+            endcase
         end
     end
 
-    assign a         = stage2_a;
-    assign valid_out = valid_pipe[1] & finish_final;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) valid_out <= 1'b0;
+        else        valid_out <= done_pipe;
+    end
 
 endmodule

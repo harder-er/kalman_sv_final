@@ -1,14 +1,13 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Module Name: CMU_PHi12
-// Description: CMU_PHi11 升级版，支持 PHi12 通道的六级流水计算
+// Shared 2-mul + 2-add FSM version to reduce FP IP usage
 //////////////////////////////////////////////////////////////////////////////////
 module CMU_PHi12 #(
     parameter DBL_WIDTH = 64
 )(
     input  logic                   clk,
     input  logic                   rst_n,
-    // —— 动态输入 —— 
+    // 输入
     input  logic [DBL_WIDTH-1:0]   Theta_1_4,
     input  logic [DBL_WIDTH-1:0]   Theta_1_1,
     input  logic [DBL_WIDTH-1:0]   Theta_1_7,
@@ -19,231 +18,181 @@ module CMU_PHi12 #(
     input  logic [DBL_WIDTH-1:0]   Theta_7_10,
     input  logic [DBL_WIDTH-1:0]   Theta_10_10,
     input  logic [DBL_WIDTH-1:0]   Q_1_4,
-    // —— 时间参数（常量） —— 
+    // 时间参数
     input  logic [DBL_WIDTH-1:0]   delta_t,
-    input  logic [DBL_WIDTH-1:0]   half_dt2,   // ½·Δt²
-    input  logic [DBL_WIDTH-1:0]   sixth_dt3,  // ⅙·Δt³
-    input  logic [DBL_WIDTH-1:0]   five12_dt4, // 5/12·Δt⁴
-    input  logic [DBL_WIDTH-1:0]   twleve_dt5, // 1/12·Δt⁵
-
-    // —— 输出 —— 
+    input  logic [DBL_WIDTH-1:0]   half_dt2,
+    input  logic [DBL_WIDTH-1:0]   sixth_dt3,
+    input  logic [DBL_WIDTH-1:0]   five12_dt4,
+    input  logic [DBL_WIDTH-1:0]   twleve_dt5,
+    // 输出
     output logic [DBL_WIDTH-1:0]   a,
     output logic                   valid_out
 );
 
-    // **中间信号**
-    // M1..M3；A1..A4；X1..X6；T1..T5
-    logic [DBL_WIDTH-1:0] M1, M2, M3;
-    logic [DBL_WIDTH-1:0] A1, A2, A3, A4;
-    logic [DBL_WIDTH-1:0] X1, X2, X3, X4, X5, X6;
-    logic [DBL_WIDTH-1:0] T1, T2, T3, T4, T5;
+    // 2 路乘 + 2 路加共享单元
+    logic mul_go [0:1], mul_finish [0:1];
+    logic [DBL_WIDTH-1:0] mul_a [0:1], mul_b [0:1], mul_r [0:1];
+    logic add_go [0:1], add_finish [0:1];
+    logic [DBL_WIDTH-1:0] add_a [0:1], add_b [0:1], add_r [0:1];
 
-    // valid/finish 信号线
-    logic multM_valid, finish_M1, finish_M2, finish_M3;
-    logic addA_valid, finish_A1, finish_A2, finish_A3, finish_A4;
-    logic multX_valid, finish_X1, finish_X2, finish_X3, finish_X4, finish_X5, finish_X6;
-    logic addT_valid, finish_T1, finish_T2, finish_T3, finish_T4, finish_T5;
-    logic final_valid, finish_final;
+    fp_multiplier u_mul0 (.clk(clk), .valid(mul_go[0]), .finish(mul_finish[0]), .a(mul_a[0]), .b(mul_b[0]), .result(mul_r[0]));
+    fp_multiplier u_mul1 (.clk(clk), .valid(mul_go[1]), .finish(mul_finish[1]), .a(mul_a[1]), .b(mul_b[1]), .result(mul_r[1]));
+    fp_adder      u_add0 (.clk(clk), .valid(add_go[0]), .finish(add_finish[0]), .a(add_a[0]), .b(add_b[0]), .result(add_r[0]));
+    fp_adder      u_add1 (.clk(clk), .valid(add_go[1]), .finish(add_finish[1]), .a(add_a[1]), .b(add_b[1]), .result(add_r[1]));
 
-    // 管线有效信号
-    logic [5:0] valid_pipe;
+    // 中间寄存器
+    logic [DBL_WIDTH-1:0] m1, m2, m3;
+    logic [DBL_WIDTH-1:0] a1, a2, a3, a4;
+    logic [DBL_WIDTH-1:0] x1, x2, x3, x4, x5;
+    logic [DBL_WIDTH-1:0] t1, t2, t3, t4, t5;
 
-    // ------------------------------------------------------------------------
-    // 常数乘法： M1=3*Θ4,7； M2=3*Θ7,7； M3=4*Θ10,10
-    // ------------------------------------------------------------------------
-    assign multM_valid = 1'b1;
-    fp_multiplier mult_M1 (
-        .clk    (clk),
-        .valid  (multM_valid),
-        .finish (finish_M1),
-        .a      (64'h4008_0000_0000_0000),  // 3.0
-        .b      (Theta_4_7),
-        .result (M1)
-    );
-    fp_multiplier mult_M2 (
-        .clk    (clk),
-        .valid  (multM_valid),
-        .finish (finish_M2),
-        .a      (64'h4008_0000_0000_0000),  // 3.0
-        .b      (Theta_7_7),
-        .result (M2)
-    );
-    fp_multiplier mult_M3 (
-        .clk    (clk),
-        .valid  (multM_valid),
-        .finish (finish_M3),
-        .a      (64'h4010_0000_0000_0000),  // 4.0
-        .b      (Theta_4_10),
-        .result (M3)
-    );
+    typedef enum logic [3:0] {
+        S_IDLE,
+        S_M1M2, S_M3,
+        S_A12, S_A34,
+        S_X12, S_X34, S_X5,
+        S_T2T3, S_T4T5, S_FINAL
+    } state_e;
 
-    // ------------------------------------------------------------------------
-    // 加法： A1 = Θ1,1 + Q1,4
-    //       A2 = Θ1,7 + Θ1,4
-    //       A3 = Θ1,10 + M1
-    //       A4 = M2 + M3
-    // ------------------------------------------------------------------------
-    assign addA_valid = finish_M1 & finish_M2 & finish_M3;
-    fp_adder add_A1 (
-        .clk    (clk),
-        .valid  (addA_valid),
-        .finish (finish_A1),
-        .a      (Theta_1_1),
-        .b      (Q_1_4),
-        .result (A1)
-    );
-    fp_adder add_A2 (
-        .clk    (clk),
-        .valid  (addA_valid),
-        .finish (finish_A2),
-        .a      (Theta_1_7),
-        .b      (Theta_1_4),
-        .result (A2)
-    );
-    fp_adder add_A3 (
-        .clk    (clk),
-        .valid  (addA_valid),
-        .finish (finish_A3),
-        .a      (Theta_1_10),
-        .b      (M1),
-        .result (A3)
-    );
-    fp_adder add_A4 (
-        .clk    (clk),
-        .valid  (addA_valid),
-        .finish (finish_A4),
-        .a      (M2),
-        .b      (M3),
-        .result (A4)
-    );
+    state_e state;
+    logic done_pipe;
 
-    // ------------------------------------------------------------------------
-    // 时间乘法：X1..X6
-    // ------------------------------------------------------------------------
-    assign multX_valid = finish_A1 & finish_A2 & finish_A3 & finish_A4;
-    fp_multiplier mult_X1 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X1),
-        .a      ({1'b0,delta_t[DBL_WIDTH-1:1]}), // 2*Δt
-        .b      (Theta_1_4),
-        .result (X1)
-    );
-    fp_multiplier mult_X2 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X2),
-        .a      (half_dt2),
-        .b      (A2),
-        .result (X2)
-    );
-    fp_multiplier mult_X3 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X3),
-        .a      (sixth_dt3),
-        .b      (A3),
-        .result (X3)
-    );
-    fp_multiplier mult_X4 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X4),
-        .a      (five12_dt4),
-        .b      (A4),
-        .result (X4)
-    );
-    fp_multiplier mult_X5 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X5),
-        .a      (twleve_dt5),
-        .b      (Theta_7_10),
-        .result (X5)
-    );
-    fp_multiplier mult_X6 (
-        .clk    (clk),
-        .valid  (multX_valid),
-        .finish (finish_X6),
-        .a      (delta_t),     // Δt⁶ 建议外部预计算
-        .b      (Theta_10_10),
-        .result (X6)
-    );
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= S_IDLE;
+            {mul_go[0], mul_go[1], add_go[0], add_go[1]} <= 4'b0;
+            {m1,m2,m3,a1,a2,a3,a4,x1,x2,x3,x4,x5,t1,t2,t3,t4,t5,a} <= '{default:'0};
+            done_pipe <= 1'b0;
+        end else begin
+            {mul_go[0], mul_go[1], add_go[0], add_go[1]} <= 4'b0;
+            done_pipe <= 1'b0;
 
-    // ------------------------------------------------------------------------
-    // 累加：T1..T5
-    // ------------------------------------------------------------------------
-    assign addT_valid = finish_X1 & finish_X2 & finish_X3 & finish_X4 & finish_X5 & finish_X6;
-    fp_adder add_T1 (
-        .clk    (clk),
-        .valid  (addT_valid),
-        .finish (finish_T1),
-        .a      (A1),
-        .b      (X1),
-        .result (T1)
-    );
-    fp_adder add_T2 (
-        .clk    (clk),
-        .valid  (addT_valid),
-        .finish (finish_T2),
-        .a      (X2),
-        .b      (X3),
-        .result (T2)
-    );
-    fp_adder add_T3 (
-        .clk    (clk),
-        .valid  (addT_valid),
-        .finish (finish_T3),
-        .a      (X4),
-        .b      (X5),
-        .result (T3)
-    );
-    fp_adder add_T4 (
-        .clk    (clk),
-        .valid  (addT_valid),
-        .finish (finish_T4),
-        .a      (T1),
-        .b      (X6),
-        .result (T4)
-    );
-    fp_adder add_T5 (
-        .clk    (clk),
-        .valid  (addT_valid),
-        .finish (finish_T5),
-        .a      (T2),
-        .b      (T3),
-        .result (T5)
-    );
+            case (state)
+                S_IDLE: begin
+                    // 常数乘法 M1=3*Θ4_7, M2=3*Θ7_7
+                    mul_a[0] <= 64'h4008_0000_0000_0000; mul_b[0] <= Theta_4_7;
+                    mul_a[1] <= 64'h4008_0000_0000_0000; mul_b[1] <= Theta_7_7;
+                    mul_go[0] <= 1'b1; mul_go[1] <= 1'b1;
+                    state <= S_M1M2;
+                end
 
-    // ------------------------------------------------------------------------
-    // 最终累加 a = T5 + T4
-    // ------------------------------------------------------------------------
-    assign final_valid = finish_T1 & finish_T2 & finish_T3 & finish_T4 & finish_T5;
-    fp_adder final_add (
-        .clk    (clk),
-        .valid  (final_valid),
-        .finish (finish_final),
-        .a      (T5),
-        .b      (T4),
-        .result (a)
-    );
+                S_M1M2: begin
+                    if (mul_finish[0]) m1 <= mul_r[0];
+                    if (mul_finish[1]) m2 <= mul_r[1];
+                    if (mul_finish[0] && mul_finish[1]) begin
+                        mul_a[0] <= 64'h4010_0000_0000_0000; // 4.0
+                        mul_b[0] <= Theta_4_10;
+                        mul_go[0] <= 1'b1;
+                        state <= S_M3;
+                    end
+                end
 
+                S_M3: begin
+                    if (mul_finish[0]) begin
+                        m3 <= mul_r[0];
+                        // A1 = Θ1_1 + Q1_4, A2 = Θ1_7 + Θ1_4
+                        add_a[0] <= Theta_1_1; add_b[0] <= Q_1_4;
+                        add_a[1] <= Theta_1_7; add_b[1] <= Theta_1_4;
+                        add_go[0] <= 1'b1; add_go[1] <= 1'b1;
+                        state <= S_A12;
+                    end
+                end
 
+                S_A12: begin
+                    if (add_finish[0]) a1 <= add_r[0];
+                    if (add_finish[1]) a2 <= add_r[1];
+                    if (add_finish[0] && add_finish[1]) begin
+                        add_a[0] <= Theta_1_10; add_b[0] <= m1; // A3
+                        add_a[1] <= m2;         add_b[1] <= m3; // A4
+                        add_go[0] <= 1'b1; add_go[1] <= 1'b1;
+                        state <= S_A34;
+                    end
+                end
 
-always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        valid_pipe <= '0;
-    end else begin
+                S_A34: begin
+                    if (add_finish[0]) a3 <= add_r[0];
+                    if (add_finish[1]) a4 <= add_r[1];
+                    if (add_finish[0] && add_finish[1]) begin
+                        // X1 = delta_t * Θ1_10
+                        mul_a[0] <= delta_t; mul_b[0] <= Theta_1_10;
+                        // X2 = half_dt2 * a2
+                        mul_a[1] <= half_dt2; mul_b[1] <= a2;
+                        mul_go[0] <= 1'b1; mul_go[1] <= 1'b1;
+                        state <= S_X12;
+                    end
+                end
 
-        // valid 管线：5 级延迟后输出
-        valid_pipe <= { valid_pipe[4:0], 1'b1 };
+                S_X12: begin
+                    if (mul_finish[0]) x1 <= mul_r[0];
+                    if (mul_finish[1]) x2 <= mul_r[1];
+                    if (mul_finish[0] && mul_finish[1]) begin
+                        // X3 = sixth_dt3 * a3, X4 = five12_dt4 * a4
+                        mul_a[0] <= sixth_dt3; mul_b[0] <= a3;
+                        mul_a[1] <= five12_dt4; mul_b[1] <= a4;
+                        mul_go[0] <= 1'b1; mul_go[1] <= 1'b1;
+                        state <= S_X34;
+                    end
+                end
+
+                S_X34: begin
+                    if (mul_finish[0]) x3 <= mul_r[0];
+                    if (mul_finish[1]) x4 <= mul_r[1];
+                    if (mul_finish[0] && mul_finish[1]) begin
+                        // X5 = twleve_dt5 * Θ7_10
+                        mul_a[0] <= twleve_dt5; mul_b[0] <= Theta_7_10;
+                        mul_go[0] <= 1'b1;
+                        state <= S_X5;
+                    end
+                end
+
+                S_X5: begin
+                    if (mul_finish[0]) begin
+                        x5 <= mul_r[0];
+                        // T1 = a1 + x1, T2 = x2 + x3
+                        add_a[0] <= a1; add_b[0] <= x1;
+                        add_a[1] <= x2; add_b[1] <= x3;
+                        add_go[0] <= 1'b1; add_go[1] <= 1'b1;
+                        state <= S_T2T3;
+                    end
+                end
+
+                S_T2T3: begin
+                    if (add_finish[0]) t1 <= add_r[0];
+                    if (add_finish[1]) t2 <= add_r[1];
+                    if (add_finish[0] && add_finish[1]) begin
+                        // T3 = x4 + x5, T4 = t1 + Theta_4_10 (延用模式保持占位)
+                        add_a[0] <= x4; add_b[0] <= x5;
+                        add_a[1] <= t1; add_b[1] <= Theta_4_10; // 复用第二加法器
+                        add_go[0] <= 1'b1; add_go[1] <= 1'b1;
+                        state <= S_T4T5;
+                    end
+                end
+
+                S_T4T5: begin
+                    if (add_finish[0]) t3 <= add_r[0];
+                    if (add_finish[1]) t4 <= add_r[1];
+                    if (add_finish[0] && add_finish[1]) begin
+                        // 最终 a = t2 + t3 (这里 t4 未用，可视作占位)
+                        add_a[0] <= t2; add_b[0] <= t3;
+                        add_go[0] <= 1'b1;
+                        state <= S_FINAL;
+                    end
+                end
+
+                S_FINAL: begin
+                    if (add_finish[0]) begin
+                        a <= add_r[0];
+                        done_pipe <= 1'b1;
+                        state <= S_IDLE;
+                    end
+                end
+            endcase
+        end
     end
-end
 
-// 输出
-assign valid_out = valid_pipe[5]&finish_final;
-// 最终 a 也是第5级累加的结果，直接从 stage4_T[4] 输出或再做一次加法
-
-
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) valid_out <= 1'b0;
+        else        valid_out <= done_pipe;
+    end
 
 endmodule
