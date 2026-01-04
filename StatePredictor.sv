@@ -77,6 +77,7 @@ module StatePredictor #(
 
 
     logic sys_load_en;
+    logic systolic_done;
     assign sys_load_en = Init_Valid & (finish[0] & finish[1] & finish[2] & finish[3] & finish[4] & finish[5]);
     SystolicArray #(
         .DWIDTH(64),
@@ -91,7 +92,8 @@ module StatePredictor #(
         .enb_1      (   1'b1            ),
         .enb_2_6    (   1'b1            ),
         .enb_7_12   (   1'b0            ),
-        .c_out      (   Xkkmatrix       )
+        .c_out      (   Xkkmatrix       ),
+        .cal_finish (   systolic_done   )
     );
 
     generate
@@ -99,5 +101,7 @@ module StatePredictor #(
            assign X_kk[i] = Xkkmatrix[i][0];
         end
     endgenerate
+
+    assign SP_DONE = systolic_done;
 
 endmodule

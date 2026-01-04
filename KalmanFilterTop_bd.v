@@ -21,52 +21,48 @@
 
 
 module KalmanFilterTop_bd (
-  input  wire clk,
-  input  wire rst_n,
-  input  wire start,
-  output wire filter_done,
-
-  // m0 read
-  output wire [31:0]  m0_axi_araddr,
-  output wire [7:0]   m0_axi_arlen,
-  output wire [2:0]   m0_axi_arsize,
-  output wire [1:0]   m0_axi_arburst,
-  output wire         m0_axi_arvalid,
-  input  wire         m0_axi_arready,
-  input  wire [511:0] m0_axi_rdata,
-  input  wire         m0_axi_rvalid,
-  output wire         m0_axi_rready,
-
-  // m1 read
-  output wire [31:0]  m1_axi_araddr,
-  output wire [7:0]   m1_axi_arlen,
-  output wire [2:0]   m1_axi_arsize,
-  output wire [1:0]   m1_axi_arburst,
-  output wire         m1_axi_arvalid,
-  input  wire         m1_axi_arready,
-  input  wire [511:0] m1_axi_rdata,
-  input  wire         m1_axi_rvalid,
-  output wire         m1_axi_rready,
-
-  // m2 write
-  output wire [31:0]  m2_axi_awaddr,
-  output wire [7:0]   m2_axi_awlen,
-  output wire [2:0]   m2_axi_awsize,
-  output wire [1:0]   m2_axi_awburst,
-  output wire         m2_axi_awvalid,
-  input  wire         m2_axi_awready,
-  output wire [511:0] m2_axi_wdata,
-  output wire [63:0]  m2_axi_wstrb,
-  output wire         m2_axi_wvalid,
-  input  wire         m2_axi_wready,
-  output wire         m2_axi_wlast,
-  input  wire [1:0]   m2_axi_bresp,
-  input  wire         m2_axi_bvalid,
-  output wire         m2_axi_bready,
-
-  // legacy (unused)
-  input  wire [63:0]  z_data,
-  input  wire         z_valid
+    input  wire clk,
+    input  wire rst_n,
+    input  wire start,
+    output wire filter_done,
+    
+    // m0 read
+    output wire [31:0]  m0_axi_araddr,
+    output wire [7:0]   m0_axi_arlen,
+    output wire [2:0]   m0_axi_arsize,
+    output wire [1:0]   m0_axi_arburst,
+    output wire         m0_axi_arvalid,
+    input  wire         m0_axi_arready,
+    input  wire [511:0] m0_axi_rdata,
+    input  wire         m0_axi_rvalid,
+    output wire         m0_axi_rready,
+    
+    // m1 read
+    output wire [31:0]  m1_axi_araddr,
+    output wire [7:0]   m1_axi_arlen,
+    output wire [2:0]   m1_axi_arsize,
+    output wire [1:0]   m1_axi_arburst,
+    output wire         m1_axi_arvalid,
+    input  wire         m1_axi_arready,
+    input  wire [511:0] m1_axi_rdata,
+    input  wire         m1_axi_rvalid,
+    output wire         m1_axi_rready,
+    
+    // m2 write
+    output wire [31:0]  m2_axi_awaddr,
+    output wire [7:0]   m2_axi_awlen,
+    output wire [2:0]   m2_axi_awsize,
+    output wire [1:0]   m2_axi_awburst,
+    output wire         m2_axi_awvalid,
+    input  wire         m2_axi_awready,
+    output wire [511:0] m2_axi_wdata,
+    output wire [63:0]  m2_axi_wstrb,
+    output wire         m2_axi_wvalid,
+    input  wire         m2_axi_wready,
+    output wire         m2_axi_wlast,
+    input  wire [1:0]   m2_axi_bresp,
+    input  wire         m2_axi_bvalid,
+    output wire         m2_axi_bready
 );
 
   KalmanFilterTop u_top (
@@ -107,9 +103,7 @@ module KalmanFilterTop_bd (
     .m2_axi_wlast(m2_axi_wlast),
     .m2_axi_bresp(m2_axi_bresp), 
 	.m2_axi_bvalid(m2_axi_bvalid), 
-	.m2_axi_bready(m2_axi_bready),
-
-    .z_data(z_data), .z_valid(z_valid)
+	.m2_axi_bready(m2_axi_bready)
   );
 
 endmodule

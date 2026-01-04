@@ -1,116 +1,85 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Shared 2-mul + 2-add FSM version (PHi33)
+// CMU_PHi33 - 单乘单加 FSM 版本，避免未驱动浮点端口
 //////////////////////////////////////////////////////////////////////////////////
 module CMU_PHi33 #(
     parameter DBL_WIDTH = 64
 )(
     input  logic                   clk,
     input  logic                   rst_n,
-    // 输入
     input  logic [DBL_WIDTH-1:0]   Theta_7_7,
     input  logic [DBL_WIDTH-1:0]   Theta_7_10,
     input  logic [DBL_WIDTH-1:0]   Theta_10_10,
     input  logic [DBL_WIDTH-1:0]   Q_7_7,
-    // 时间参数
     input  logic [DBL_WIDTH-1:0]   two_dt,
     input  logic [DBL_WIDTH-1:0]   dt2,
-    // 输出
     output logic [DBL_WIDTH-1:0]   a,
     output logic                   valid_out
 );
 
-    // 2 路乘 + 2 路加共享单元
-    logic mul_go [0:1], mul_finish [0:1];
-    logic [DBL_WIDTH-1:0] mul_a [0:1], mul_b [0:1], mul_r [0:1];
-    logic add_go [0:1], add_finish [0:1];
-    logic [DBL_WIDTH-1:0] add_a [0:1], add_b [0:1], add_r [0:1];
+    // 单乘 + 单加
+    logic mul_go, mul_finish;
+    logic [DBL_WIDTH-1:0] mul_a, mul_b, mul_r;
+    logic add_go, add_finish;
+    logic [DBL_WIDTH-1:0] add_a, add_b, add_r;
 
-    fp_multiplier u_mul0 (.clk(clk), .valid(mul_go[0]), .finish(mul_finish[0]), .a(mul_a[0]), .b(mul_b[0]), .result(mul_r[0]));
-    fp_multiplier u_mul1 (.clk(clk), .valid(mul_go[1]), .finish(mul_finish[1]), .a(mul_a[1]), .b(mul_b[1]), .result(mul_r[1]));
-    fp_adder      u_add0 (.clk(clk), .valid(add_go[0]), .finish(add_finish[0]), .a(add_a[0]), .b(add_b[0]), .result(add_r[0]));
-    fp_adder      u_add1 (.clk(clk), .valid(add_go[1]), .finish(add_finish[1]), .a(add_a[1]), .b(add_b[1]), .result(add_r[1]));
+    fp_multiplier u_mul (.clk(clk), .valid(mul_go), .finish(mul_finish), .a(mul_a), .b(mul_b), .result(mul_r));
+    fp_adder      u_add (.clk(clk), .valid(add_go), .finish(add_finish), .a(add_a), .b(add_b), .result(add_r));
 
-    // 中间寄存器
-    logic [DBL_WIDTH-1:0] a1;
-    logic [DBL_WIDTH-1:0] x1, x2;
-    logic [DBL_WIDTH-1:0] t1;
-
-    typedef enum logic [2:0] {
-        S_IDLE,
-        S_A1,
-        S_X12,
-        S_T1,
-        S_FINAL
-    } state_e;
-
-    state_e state;
-    logic done_pipe;
+    typedef enum logic [2:0] {S_IDLE, S_A1, S_X1, S_X2, S_SUM1, S_SUM2} st_e;
+    st_e st;
+    logic [DBL_WIDTH-1:0] a1, x1, x2, t1;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= S_IDLE;
-            {mul_go[0], mul_go[1], add_go[0], add_go[1]} <= 4'b0;
-            {a1,x1,x2,t1,a} <= '{default:'0};
-            done_pipe <= 1'b0;
+            st        <= S_IDLE;
+            mul_go    <= 1'b0;
+            add_go    <= 1'b0;
+            a1 <= '0; x1 <= '0; x2 <= '0; t1 <= '0; a <= '0;
+            valid_out <= 1'b0;
         end else begin
-            {mul_go[0], mul_go[1], add_go[0], add_go[1]} <= 4'b0;
-            done_pipe <= 1'b0;
+            mul_go    <= 1'b0;
+            add_go    <= 1'b0;
+            valid_out <= 1'b0;
 
-            case (state)
+            case (st)
                 S_IDLE: begin
-                    // A1 = Theta_7_7 + Q_7_7
-                    add_a[0] <= Theta_7_7; add_b[0] <= Q_7_7;
-                    add_go[0] <= 1'b1;
-                    state <= S_A1;
+                    add_a <= Theta_7_7; add_b <= Q_7_7;
+                    add_go <= 1'b1;
+                    st <= S_A1;
                 end
 
-                S_A1: begin
-                    if (add_finish[0]) begin
-                        a1 <= add_r[0];
-                        // X1 = two_dt * Theta_7_10, X2 = dt2 * Theta_10_10
-                        mul_a[0] <= two_dt; mul_b[0] <= Theta_7_10;
-                        mul_a[1] <= dt2;    mul_b[1] <= Theta_10_10;
-                        mul_go[0] <= 1'b1; mul_go[1] <= 1'b1;
-                        state <= S_X12;
-                    end
+                S_A1: if (add_finish) begin
+                    a1    <= add_r;
+                    mul_a <= two_dt; mul_b <= Theta_7_10; mul_go <= 1'b1;
+                    st    <= S_X1;
                 end
 
-                S_X12: begin
-                    if (mul_finish[0]) x1 <= mul_r[0];
-                    if (mul_finish[1]) x2 <= mul_r[1];
-                    if (mul_finish[0] && mul_finish[1]) begin
-                        // T1 = a1 + x1
-                        add_a[0] <= a1; add_b[0] <= x1;
-                        add_go[0] <= 1'b1;
-                        state <= S_T1;
-                    end
+                S_X1: if (mul_finish) begin
+                    x1    <= mul_r;
+                    mul_a <= dt2; mul_b <= Theta_10_10; mul_go <= 1'b1;
+                    st    <= S_X2;
                 end
 
-                S_T1: begin
-                    if (add_finish[0]) begin
-                        t1 <= add_r[0];
-                        // a = t1 + x2
-                        add_a[0] <= t1; add_b[0] <= x2;
-                        add_go[0] <= 1'b1;
-                        state <= S_FINAL;
-                    end
+                S_X2: if (mul_finish) begin
+                    x2    <= mul_r;
+                    add_a <= a1; add_b <= x1; add_go <= 1'b1;
+                    st    <= S_SUM1;
                 end
 
-                S_FINAL: begin
-                    if (add_finish[0]) begin
-                        a <= add_r[0];
-                        done_pipe <= 1'b1;
-                        state <= S_IDLE;
-                    end
+                S_SUM1: if (add_finish) begin
+                    t1    <= add_r;
+                    add_a <= add_r; add_b <= x2; add_go <= 1'b1;
+                    st    <= S_SUM2;
+                end
+
+                S_SUM2: if (add_finish) begin
+                    a        <= add_r;
+                    valid_out<= 1'b1;
+                    st       <= S_IDLE;
                 end
             endcase
         end
-    end
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) valid_out <= 1'b0;
-        else        valid_out <= done_pipe;
     end
 
 endmodule

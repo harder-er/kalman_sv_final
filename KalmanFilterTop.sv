@@ -1,8 +1,13 @@
+`timescale 1ns / 1ps
+
 module KalmanFilterTop #(
     parameter int  STATE_DIM      = 12,
     parameter int  MEASURE_DIM    = 6,
     parameter real deltat         = 0.01,
-    parameter int  MAX_ITERATIONS = 100
+    parameter int  MAX_ITERATIONS = 100,
+
+    // ★新增：End_valid 触发门限（all_Z_k_read 连续为1的周期数）
+    parameter int  END_VALID_STABLE_CYCLES = 50
 ) (
     // system
     input  logic clk,
@@ -51,10 +56,6 @@ module KalmanFilterTop #(
     input  logic         m2_axi_bvalid,
     output logic         m2_axi_bready,
 
-    // legacy input (unused)
-    input  logic [63:0]  z_data,
-    input  logic         z_valid,
-
     // interrupt/status
     output logic filter_done
 );
@@ -79,10 +80,48 @@ module KalmanFilterTop #(
   logic initial_params_ready;
   logic noise_matrices_ready;
 
-  logic filter_start;
-  assign filter_start = start && initial_params_ready && noise_matrices_ready;
+  // =========================
+  // start sticky + ready handshake
+  // =========================
+  logic start_d;
+  logic start_seen;
+  logic filter_started;
+  logic filter_active;
 
-  // 写回：先用 filter_done 触发（后续你可加 writer_done 做更完整握手）
+  logic filter_start_pulse;
+  wire  start_rise = start & ~start_d;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      start_d        <= 1'b0;
+      start_seen     <= 1'b0;
+      filter_started <= 1'b0;
+      filter_active  <= 1'b0;
+    end else begin
+      start_d <= start;
+
+      if (start_rise)
+        start_seen <= 1'b1;
+
+      if (filter_start_pulse) begin
+        filter_started <= 1'b1;
+        filter_active  <= 1'b1;
+      end
+
+      if (filter_done) begin
+        start_seen     <= 1'b0;
+        filter_started <= 1'b0;
+        filter_active  <= 1'b0;
+      end
+    end
+  end
+
+  assign filter_start_pulse =
+      start_seen && !filter_started && initial_params_ready && noise_matrices_ready;
+
+  wire filter_start = filter_start_pulse;
+
+  // 写回：先用 filter_done 触发
   logic write_results_en;
   assign write_results_en = filter_done;
 
@@ -96,7 +135,7 @@ module KalmanFilterTop #(
   ) ddr4_reader_initial (
       .clk(clk),
       .rst_n(rst_n),
-      .start(start),
+      .start(start_seen),
 
       .axi_araddr (m0_axi_araddr),
       .axi_arlen  (m0_axi_arlen),
@@ -123,29 +162,24 @@ module KalmanFilterTop #(
   ) noise_gen (
       .clk(clk),
       .rst_n(rst_n),
-      .enable_gen(start),
+      .enable_gen(start_seen),
       .Q_k(Q_k_internal),
       .R_k(R_k_internal),
       .matrices_ready(noise_matrices_ready)
   );
 
   // =========================
-  // Zk request pacing (simple, no comb loop)
-  // - 每当上一帧 Zk 弹出(valid)后，再发下一次 request
-  // - 你后续可以用 kalman_core 的“需要下一帧”信号替换
+  // Zk request pacing
   // =========================
-  always_ff @(posedge clk) begin
+  always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       Z_k_request_next <= 1'b0;
     end else begin
-      if (!filter_start || filter_done || all_Z_k_read) begin
+      if (!filter_active || filter_done || all_Z_k_read) begin
         Z_k_request_next <= 1'b0;
       end else begin
-        // 如果当前没有挂起请求，就发起一次
         if (!Z_k_request_next)
           Z_k_request_next <= 1'b1;
-
-        // 当 Zk Reader 给出一帧 valid(表示已经弹出并输出)，撤销本次请求
         if (Z_k_valid_internal)
           Z_k_request_next <= 1'b0;
       end
@@ -153,7 +187,7 @@ module KalmanFilterTop #(
   end
 
   // =========================
-  // Reader1: Zk (prefetch FIFO)
+  // Reader1: Zk
   // =========================
   DDR4_Reader_Zk #(
       .MEASURE_DIM(MEASURE_DIM),
@@ -163,7 +197,7 @@ module KalmanFilterTop #(
   ) ddr4_reader_zk (
       .clk(clk),
       .rst_n(rst_n),
-      .start_read(filter_start),
+      .start_read(filter_active),
       .request_next_zk(Z_k_request_next),
 
       .axi_araddr (m1_axi_araddr),
@@ -215,28 +249,26 @@ module KalmanFilterTop #(
   );
 
   // =========================
-  // kalman core (修正 start 连接)
+  // kalman core
   // =========================
   kalman_core #(
       .STATE_DIM(STATE_DIM),
-      .MEASURE_DIM(MEASURE_DIM)
+      .MEASURE_DIM(MEASURE_DIM),
+      .END_VALID_STABLE_CYCLES(END_VALID_STABLE_CYCLES)   // ★透传参数
   ) kalman (
-      .clk         (clk),
-      .rst_n       (rst_n),
-      .start       (filter_start),          // ✅ 原来你是悬空 ()
-      .Q_k         (Q_k_internal),
-      .R_k         (R_k_internal),
-      .Z_k         (Z_k_internal),
-      .En_MDI      (Z_k_valid_internal),
-      .X_00        (X_00),
-      .P_00        (P_00),
-      .filter_done (filter_done),
-      .X_kkout     (X_kk_out_internal),
-      .P_kkout     (P_kk_out_internal)
+      .clk          (clk),
+      .rst_n        (rst_n),
+      .start        (filter_start),           // 1-cycle pulse after ready
+      .Q_k          (Q_k_internal),
+      .R_k          (R_k_internal),
+      .Z_k          (Z_k_internal),
+      .En_MDI       (Z_k_valid_internal),
+      .X_00         (X_00),
+      .P_00         (P_00),
+      .all_Z_k_read (all_Z_k_read),           // ★结束条件输入
+      .filter_done  (filter_done),
+      .X_kkout      (X_kk_out_internal),
+      .P_kkout      (P_kk_out_internal)
   );
-
-  // unused legacy inputs
-  logic unused_legacy;
-  assign unused_legacy = ^{z_data, z_valid};
 
 endmodule
