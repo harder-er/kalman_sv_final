@@ -37,14 +37,14 @@ module ProcessingElement #(
     output logic             data_ready
 );
 
-// █████ 状态机定义（符合状态转移图）
+// ████�?状态机定义（符合状态转移图�?
 typedef enum logic [2:0] {
-    IDLE, INIT, MUL, ADD, SEND_DATA, DATA_THROUGH, END
+    IDLE, INIT, MUL, ADD, SEND_DATA, DATA_THROUGH, END2
 } fsm_state;
 
 fsm_state current_state, next_state;
 
-// █████ 数据寄存器
+// ████�?数据寄存�?
 logic [DWIDTH-1:0] a_reg, b_reg;
 logic [DWIDTH-1:0] partial_sum;
 logic [DWIDTH-1:0] partial_sum_reg;
@@ -54,7 +54,7 @@ logic [DWIDTH-1:0] sum_temp;
 
 
 
-// █████ 控制信号
+// ████�?控制信号
 logic mul_start,  add_start     ;
 logic mul_finish, add_finish    ;
 
@@ -69,8 +69,7 @@ end
 
 
 
-fp_multiplier u_fp_multiplier(
-    .clk    	(clk            ),
+fp_multiplier u_fp_multiplier (.clk(clk),
     .valid  	(mul_start      ),
     .a      	(a_reg          ),
     .b      	(b_reg          ),
@@ -79,8 +78,7 @@ fp_multiplier u_fp_multiplier(
 );
 
 
-fp_adder u_fp_adder_st(
-    .clk    	(clk                ),
+fp_adder u_fp_adder_st (.clk(clk), .rst_n(rst_n),
     .valid  	(add_start          ),
     .a      	(partial_sum_reg    ),
     .b      	(sum_down           ),
@@ -89,7 +87,7 @@ fp_adder u_fp_adder_st(
 );
 
 
-// ████ 状态转移逻辑（对应状态图）
+// ████ 状态转移逻辑（对应状态图�?
 always_ff @(posedge clk) begin
     if(!rst_n) begin
         current_state <= IDLE;
@@ -117,15 +115,15 @@ always_comb begin
             if(data_ready) next_state = END;
         
         DATA_THROUGH: 
-            if(data_through_finish) next_state = END;
+            if(data_through_finish) next_state = END2;
         
-        END: 
+        END2: 
             if(en) next_state = INIT;
             else next_state = IDLE;
     endcase
 end
 
-// █████ 数据通道控制（对应架构图）
+// ████�?数据通道控制（对应架构图�?
 always_ff @(posedge clk) begin
     if(!rst_n) begin
         a_reg            <= '0;
@@ -159,12 +157,13 @@ always_ff @(posedge clk) begin
 end
 
 
-// █████ 控制信号生成（精确时序控制）
+// ████�?控制信号生成（精确时序控制）
 assign mul_start = (current_state == MUL);
 assign add_start = (current_state == ADD);
 
 
 endmodule
+
 
 
 

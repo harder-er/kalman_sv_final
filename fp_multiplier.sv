@@ -5,17 +5,17 @@
 // 
 // Create Date: 2025/03/13 09:42:35
 // Design Name: 
-// Module Name: fp_multiplier       // ¸¡µã³Ë·¨Æ÷Ä£¿é£¨ÊµÏÖÁ¢·½ÔËËã£©
+// Module Name: fp_multiplier       // ï¿½ï¿½ï¿½ï¿½Ë·ï¿½ï¿½ï¿½Ä£ï¿½é£¨Êµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½?
 // Project Name: 
 // Target Devices: 
 // Tool Versions: 
-// Description: ÊµÏÖÊäÈëÊı¾İµÄÁ¢·½ÔËËã£¬²ÉÓÃÈı¼¶Á÷Ë®Ïß¼Ü¹¹
+// Description: Êµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½İµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ã£¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ë®ï¿½ß¼Ü¹ï¿½
 // 
-// Dependencies: ÒÀÀµ¸¡µãÆ½·½¼ÆËãµ¥Ôªfp_square
+// Dependencies: ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ½ï¿½ï¿½ï¿½ï¿½ï¿½ãµ¥Ôªfp_square
 // 
 // Revision:
 // Revision 0.01 - File Created
-// Additional Comments: Á÷Ë®Ïß½×¶Î°üÀ¨Êı¾İ¼Ä´æ¡¢Æ½·½¼ÆËã¡¢Á¢·½ºÏ³É
+// Additional Comments: ï¿½ï¿½Ë®ï¿½ß½×¶Î°ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½İ¼Ä´æ¡¢Æ½ï¿½ï¿½ï¿½ï¿½ï¿½ã¡¢ï¿½ï¿½ï¿½ï¿½ï¿½Ï³ï¿½
 // 
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -29,23 +29,24 @@ module fp_multiplier (
     logic s_axis_a_tready;
     logic s_axis_b_tready;
     logic m_axis_result_tvalid;
-    // ÊµÀı»¯Ë«¾«¶È³Ë·¨Æ÷IP
+    // Êµï¿½ï¿½ï¿½ï¿½Ë«ï¿½ï¿½ï¿½È³Ë·ï¿½ï¿½ï¿½IP
     floating_point_mul u_floating_point_mul(
-        .aclk                   ( clk                   ),             // Ê±ÖÓ
-		// A Í¨µÀ   
-		.s_axis_a_tvalid        ( valid                 ),        // ÊäÈë A ÓĞĞ§
-		.s_axis_a_tready        ( s_axis_a_tready       ),        // ÊäÈë A ¾ÍĞ÷
-		.s_axis_a_tdata         ( a                     ),         // ÊäÈë A Êı¾İ
-		// B Í¨µÀ   
-		.s_axis_b_tvalid        ( valid                 ),        // ÊäÈë B ÓĞĞ§
-		.s_axis_b_tready        ( s_axis_b_tready       ),        // ÊäÈë B ¾ÍĞ÷
-		.s_axis_b_tdata         ( b                     ),         // ÊäÈë B Êı¾İ
-		// Êä³ö½á¹ûÍ¨µÀ
-		.m_axis_result_tvalid   ( m_axis_result_tvalid  ),   // ½á¹ûÓĞĞ§
-		.m_axis_result_tready   ( 1'b1                  ),   // ½á¹û¾ÍĞ÷
-		.m_axis_result_tdata    ( result          		)     // ½á¹ûÊı¾İ
+        .aclk                   ( clk                   ),             // Ê±ï¿½ï¿½
+        // .aresetn                ( rst_n                 ),             // å¼‚æ­¥å¤ä½
+		// A Í¨ï¿½ï¿½   
+		.s_axis_a_tvalid        ( valid                 ),        // ï¿½ï¿½ï¿½ï¿½ A ï¿½ï¿½Ğ§
+		.s_axis_a_tready        ( s_axis_a_tready       ),        // ï¿½ï¿½ï¿½ï¿½ A ï¿½ï¿½ï¿½ï¿½
+		.s_axis_a_tdata         ( a                     ),         // ï¿½ï¿½ï¿½ï¿½ A ï¿½ï¿½ï¿½ï¿½
+		// B Í¨ï¿½ï¿½   
+		.s_axis_b_tvalid        ( valid                 ),        // ï¿½ï¿½ï¿½ï¿½ B ï¿½ï¿½Ğ§
+		.s_axis_b_tready        ( s_axis_b_tready       ),        // ï¿½ï¿½ï¿½ï¿½ B ï¿½ï¿½ï¿½ï¿½
+		.s_axis_b_tdata         ( b                     ),         // ï¿½ï¿½ï¿½ï¿½ B ï¿½ï¿½ï¿½ï¿½
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¨ï¿½ï¿½
+		.m_axis_result_tvalid   ( m_axis_result_tvalid  ),   // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½?
+		.m_axis_result_tready   ( 1'b1                  ),   // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½?
+		.m_axis_result_tdata    ( result          		)     // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½?
 	);
 
-assign finish = m_axis_result_tvalid & s_axis_a_tready & s_axis_b_tready;
+assign finish = m_axis_result_tvalid;  // ï¿½?åªçœ‹ç»“æœæœ‰æ•ˆä¿¡å·
 
 endmodule

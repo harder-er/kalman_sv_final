@@ -25,7 +25,7 @@ module CMU_PHi43 #(
     logic [DBL_WIDTH-1:0] add_a, add_b, add_r;
 
     fp_multiplier u_mul (.clk(clk), .valid(mul_go), .finish(mul_finish), .a(mul_a), .b(mul_b), .result(mul_r));
-    fp_adder      u_add (.clk(clk), .valid(add_go), .finish(add_finish), .a(add_a), .b(add_b), .result(add_r));
+    fp_adder u_add (.clk(clk), .valid(add_go), .finish(add_finish), .a(add_a), .b(add_b), .result(add_r));
 
     typedef enum logic [1:0] {S_IDLE, S_A1, S_X1, S_SUM} st_e;
     st_e st;
@@ -67,3 +67,4 @@ module CMU_PHi43 #(
     end
 
 endmodule
+

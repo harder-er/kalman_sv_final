@@ -67,8 +67,7 @@ module CovarianceUpdate #(
     logic sub_valid, sub_finish;
     logic [DWIDTH-1:0] sub_a, sub_b, sub_y;
 
-    fp_suber u_sub (
-        .clk    (clk),
+    fp_suber u_sub (.clk(clk),
         .valid  (sub_valid),
         .finish (sub_finish),
         .a      (sub_a),
@@ -170,8 +169,7 @@ module CovarianceUpdate #(
     logic add_valid, add_finish;
     logic [DWIDTH-1:0] add_a, add_b, add_y;
 
-    fp_adder u_add (
-        .clk    (clk),
+    fp_adder u_add (.clk(clk),
         .valid  (add_valid),
         .finish (add_finish),
         .a      (add_a),
@@ -365,6 +363,7 @@ module CovarianceUpdate #(
                 end
 
                 ST_SA_KR_WAIT: begin
+                    sa_load_en <= 1'b0;  // �?拉低 load_en，允�?SystolicArray 完成
                     if (sa_done) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
@@ -382,6 +381,7 @@ module CovarianceUpdate #(
                 end
 
                 ST_SA_KRKt_WAIT: begin
+                    sa_load_en <= 1'b0;  // �?拉低 load_en
                     if (sa_done) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
@@ -399,6 +399,7 @@ module CovarianceUpdate #(
                 end
 
                 ST_SA_IKHP_WAIT: begin
+                    sa_load_en <= 1'b0;  // �?拉低 load_en
                     if (sa_done) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
@@ -416,6 +417,7 @@ module CovarianceUpdate #(
                 end
 
                 ST_SA_IKHPIKHT_WAIT: begin
+                    sa_load_en <= 1'b0;  // �?拉低 load_en
                     if (sa_done) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
@@ -453,7 +455,10 @@ module CovarianceUpdate #(
 
                 ST_DONE: begin
                     SCU_Done <= 1'b1;
-                    // stay done until next start or reset
+                    // Return to IDLE after one cycle (when start goes low)
+                    if (!CKG_Done) begin
+                        st <= ST_IDLE;
+                    end
                 end
 
                 default: st <= ST_IDLE;
@@ -463,3 +468,4 @@ module CovarianceUpdate #(
     end
 
 endmodule
+

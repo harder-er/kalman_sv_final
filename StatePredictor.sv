@@ -26,15 +26,14 @@ module StatePredictor #(
     input   logic             clk                           ,
     input   logic             rst_n                         ,
 
-    input   logic             Init_Valid                    ,     // 初始化有效信号
-    output  logic             SP_DONE                       ,     // 状态预测完成信号   
-    
-    input   logic [VEC_WIDTH-1:0] X_kk1  [MAT_DIM-1:0]      ,     // 上一时刻状态估计
-    input   logic [VEC_WIDTH-1:0] K_k    [12-1:0][6-1:0]   ,     // Kalman增益
-    input   logic [VEC_WIDTH-1:0] Z_k    [6-1:0]            ,     // 观测值
+    input   logic             Init_Valid                    ,     // 初始化有效信�?    
+    output  logic             SP_DONE                       ,     // 状态预测完成信�?  
 
-    output  logic [VEC_WIDTH-1:0] X_kk   [MAT_DIM-1:0]           // 下一时刻状态估计
-);
+    input   logic [VEC_WIDTH-1:0] X_kk1  [MAT_DIM-1:0]      ,     // 上一时刻状态估?    
+    input   logic [VEC_WIDTH-1:0] K_k    [12-1:0][6-1:0]   ,     // Kalman增益
+    input   logic [VEC_WIDTH-1:0] Z_k    [6-1:0]            ,     // 观测?
+    output  logic [VEC_WIDTH-1:0] X_kk   [MAT_DIM-1:0]           // 下一时刻状态估?
+    );
     logic [VEC_WIDTH-1:0] HX [6-1:0];
     logic [VEC_WIDTH-1:0] Z_HX [6-1:0]; // 上一时刻状态协方差矩阵
     logic finish[6-1:0];
@@ -42,8 +41,8 @@ module StatePredictor #(
         for (genvar i = 0; i < 6; i++) begin : gen_HX
             assign HX[i] = X_kk1[i];
 
-            fp_suber u_fp_suber(
-                .clk    	(   clk         ),
+            fp_suber u_fp_suber (.clk(clk), 
+            // .rst_n(rst_n),
                 .valid      (   1'b1        ),
                 .finish     (   finish[i]   ),
                 .a      	(   Z_k[i]      ),
@@ -59,13 +58,13 @@ module StatePredictor #(
     logic [64-1:0] KKmatrix [0:12-1][0:12-1];
     logic [64-1:0] ZHXmatrix [0:12-1][0:12-1];
     logic [64-1:0] Xkkmatrix [0:12-1][0:12-1];
-    generate//填充为12x12矩阵
+    generate//填充�?2x12矩阵
         for (genvar i = 0; i < 12; i++) begin : row_gen
             for (genvar j = 0; j < 12; j++) begin : col_gen
                 always_ff @(posedge clk or negedge rst_n) begin
                     if (!rst_n) begin
-                        KKmatrix[i][j] <= 64'h0; // 复位时清零
-                        ZHXmatrix[i][j] <= 64'h0; // 复位时清零
+                        KKmatrix[i][j] <= 64'h0; // 复位时清�?                        
+                        ZHXmatrix[i][j] <= 64'h0; // 复位时清�?                    
                     end else  begin
                         KKmatrix[i][j] <= (j < 6) ? K_k[i][j] : 64'h0;
                         ZHXmatrix[i][j] <= (j < 6&&i == 0) ? Z_HX[i] : 64'h0;
@@ -105,3 +104,4 @@ module StatePredictor #(
     assign SP_DONE = systolic_done;
 
 endmodule
+

@@ -22,8 +22,8 @@
 module StateUpdate (
     input  logic         clk                    , 
     input  logic         rst_n                  ,
-    
-    // 状态转移矩阵输入
+
+    // 状态转移矩阵输入    
     input  logic [63:0]  F      [11:0][11:0]    , // 
     input  logic [63:0]  X_kk   [11:0]          , // 
     // FIFO输出接口
@@ -34,7 +34,7 @@ module StateUpdate (
     output logic         SCU_Done
 );
 logic [64-1:0] matrix_out [0:12-1][0:12-1];
-generate//填充为12x12矩阵
+generate//填充�?2x12矩阵
     for (genvar i = 0; i < 12; i++) begin : row_gen
         for (genvar j = 0; j < 12; j++) begin : col_gen  
             assign matrix_out[i][j] = (j == 0) ? X_kk[i] : 64'h0;

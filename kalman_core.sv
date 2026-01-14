@@ -1,48 +1,58 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Module Name: kalman_core
-// Description: 卡尔曼滤波核心
-//////////////////////////////////////////////////////////////////////////////////
 
 module kalman_core #(
-    parameter int  STATE_DIM     = 12,
-    parameter int  MEASURE_DIM   = 6,
-    parameter real deltat        = 0.01,
+    parameter int  STATE_DIM  = 12,
+    parameter int  MEASURE_DIM= 6,
+    parameter real deltat     = 0.01,
 
-    // ★新增：all_Z_k_read 连续为1多少个周期后，认为 End_valid=1
+    // End_valid：最后一次迭代完成后，再延迟 N 个周期才拉高
     parameter int  END_VALID_STABLE_CYCLES = 50
 )(
     input  logic                         clk,
     input  logic                         rst_n,
-    input  logic                         start,
+    input  logic                         start,          // ★建议接 Top �?filter_start_pulse�? 拍）
 
-    // 系统模型参数
     input  logic [63:0]                  Q_k [STATE_DIM-1:0][STATE_DIM-1:0],
     input  logic [63:0]                  R_k [MEASURE_DIM-1:0][MEASURE_DIM-1:0],
 
-    // 实时数据接口
     input  logic [63:0]                  Z_k [MEASURE_DIM-1:0],
-    input  logic                         En_MDI,
+    input  logic                         En_MDI,         // ★来自 Top 的 mdi_valid_hold
     input  logic [63:0]                  X_00 [STATE_DIM-1:0],
     input  logic [63:0]                  P_00 [STATE_DIM-1:0][STATE_DIM-1:0],
 
-    // 结束条件输入：来自 Top（Zk reader 的 all_Z_k_read）
     input  logic                         all_Z_k_read,
 
-    // 滤波结果输出
+    output logic                         SP_Done,        // ★新增：状态预测完成信?   
+     output logic                         iter_done_pulse,
+
     output logic [63:0]                  X_kkout [STATE_DIM-1:0],
     output logic [63:0]                  P_kkout [STATE_DIM-1:0][STATE_DIM-1:0],
-    output logic                         filter_done
+    output logic                         filter_done,
+    
+    // ===== AXI Master 2 : Write Output (from StateCovarainceOutput) =====
+    output logic [31:0]   m2_axi_awaddr,
+    output logic [7:0]    m2_axi_awlen,
+    output logic [2:0]    m2_axi_awsize,
+    output logic [1:0]    m2_axi_awburst,
+    output logic          m2_axi_awvalid,
+    input  logic          m2_axi_awready,
+    
+    output logic [511:0]  m2_axi_wdata,
+    output logic [63:0]   m2_axi_wstrb,
+    output logic          m2_axi_wvalid,
+    input  logic          m2_axi_wready,
+    output logic          m2_axi_wlast,
+    
+    input  logic [1:0]    m2_axi_bresp,
+    input  logic          m2_axi_bvalid,
+    output logic          m2_axi_bready
 );
 
-    // -------------------------------------------------
-    // 内部信号
-    // -------------------------------------------------
+    // ---------------- internal ----------------
     logic [63:0] X_k1k [STATE_DIM-1:0];
     logic [63:0] X_kk1 [STATE_DIM-1:0];
     logic [63:0] X_kk  [STATE_DIM-1:0];
 
-    logic [63:0] P_k1k  [STATE_DIM-1:0][STATE_DIM-1:0];
     logic [63:0] P_kk1  [STATE_DIM-1:0][STATE_DIM-1:0];
     logic [63:0] P_kk   [STATE_DIM-1:0][STATE_DIM-1:0];
     logic [63:0] P_k1k1 [STATE_DIM-1:0][STATE_DIM-1:0];
@@ -50,9 +60,8 @@ module kalman_core #(
     logic [63:0] K_k [STATE_DIM-1:0][MEASURE_DIM-1:0];
     logic [63:0] F   [STATE_DIM-1:0][STATE_DIM-1:0];
 
-    // KF_ControlUnit 相关握手信号
+    // handshake signals to CU
     logic Init_Valid;
-    logic SP_Done;
     logic SCU_Done_s;
     logic SCU_Done_p;
     logic CKG_Done;
@@ -60,74 +69,53 @@ module kalman_core #(
     logic MDI_Valid;
     logic End_valid;
 
-    logic en_init;
-    logic en_sp;
-    logic en_ckg;
-    logic en_scu;
-    logic en_sco;
-    logic finish;
+    logic en_init, en_sp, en_ckg, en_scu, en_sco, finish;
 
-    // 其他缺失信号补齐
-    logic F_finish;
-
-    // -------------------------------------------------
-    // MDI_Valid：必须确定驱动
-    // -------------------------------------------------
+    // MDI valid from Top (hold)
     assign MDI_Valid = En_MDI;
 
-    // -------------------------------------------------
-    // End_valid：all_Z_k_read 连续拉高 N 周期（参数化）后置 1
-    // - all_Z_k_read=1: 计数累加
-    // - all_Z_k_read=0: 计数清零（要求“连续”为1）
-    // - 达到门限：End_valid 拉高并保持到下一次 start
-    // -------------------------------------------------
-    localparam int ECW = (END_VALID_STABLE_CYCLES < 1) ? 1 : $clog2(END_VALID_STABLE_CYCLES + 1);
-    localparam int unsigned END_M1_INT = (END_VALID_STABLE_CYCLES < 1) ? 0 : (END_VALID_STABLE_CYCLES - 1);
-    localparam logic [ECW-1:0] END_M1 = END_M1_INT[ECW-1:0];
+    // SCO_Valid from StateCovarainceOutput (will replace hardcoded 0)
+    logic sco_done_signal;
+    logic [7:0] iteration_cnt_sco;
+    logic all_iter_done;
+    assign SCO_Valid = sco_done_signal;
+    
+    // AXI write address/data signals from StateCovarainceOutput
+    logic [31:0]   sco_axi_awaddr;
+    logic [7:0]    sco_axi_awlen;
+    logic [2:0]    sco_axi_awsize;
+    logic [1:0]    sco_axi_awburst;
+    logic          sco_axi_awvalid;
+    logic          sco_axi_awready;
+    logic [511:0]  sco_axi_wdata;
+    logic [63:0]   sco_axi_wstrb;
+    logic          sco_axi_wvalid;
+    logic          sco_axi_wready;
+    logic          sco_axi_wlast;
+    logic [1:0]    sco_axi_bresp;
+    logic          sco_axi_bvalid;
+    logic          sco_axi_bready;
+    
+    // Connect AXI outputs directly from StateCovarainceOutput
+    assign m2_axi_awaddr   = sco_axi_awaddr;
+    assign m2_axi_awlen    = sco_axi_awlen;
+    assign m2_axi_awsize   = sco_axi_awsize;
+    assign m2_axi_awburst  = sco_axi_awburst;
+    assign m2_axi_awvalid  = sco_axi_awvalid;
+    assign sco_axi_awready = m2_axi_awready;
+    assign m2_axi_wdata    = sco_axi_wdata;
+    assign m2_axi_wstrb    = sco_axi_wstrb;
+    assign m2_axi_wvalid   = sco_axi_wvalid;
+    assign sco_axi_wready  = m2_axi_wready;
+    assign m2_axi_wlast    = sco_axi_wlast;
+    assign sco_axi_bresp   = m2_axi_bresp;
+    assign sco_axi_bvalid  = m2_axi_bvalid;
+    assign m2_axi_bready   = sco_axi_bready;
 
-    logic [ECW-1:0] end_cnt;
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            end_cnt   <= '0;
-            End_valid <= 1'b0;
-        end else begin
-            // 新一轮 start（你这里是 1 拍脉冲）-> 清零
-            if (start) begin
-                end_cnt   <= '0;
-                End_valid <= 1'b0;
-            end else if (!End_valid) begin
-                if (all_Z_k_read) begin
-                    if (end_cnt == END_M1) begin
-                        End_valid <= 1'b1;
-                    end else begin
-                        end_cnt <= end_cnt + {{(ECW-1){1'b0}},1'b1};
-                    end
-                end else begin
-                    end_cnt <= '0; // ★要求连续高
-                end
-            end
-        end
-    end
-
-    // -------------------------------------------------
-    // SCO_Valid debug：assign SCO_Valid = en_sco（仅用于 debug）
-    // 为避免组合环路，这里打一拍
-    // -------------------------------------------------
-    logic sco_valid_dbg;
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) sco_valid_dbg <= 1'b0;
-        else        sco_valid_dbg <= en_sco;
-    end
-    assign SCO_Valid = sco_valid_dbg;
-
-    // -------------------------------------------------
-    // filter_done：用控制单元 finish
-    // -------------------------------------------------
+    // filter_done
     assign filter_done = finish;
 
-    // -------------------------------------------------
-    // 输出结果导出
-    // -------------------------------------------------
+    // output export
     genvar gi, gj;
     generate
         for (gi = 0; gi < STATE_DIM; gi++) begin : GEN_OUT_X
@@ -141,57 +129,88 @@ module kalman_core #(
     endgenerate
 
     // -------------------------------------------------
-    // ★Init_Valid 自动拉高逻辑（保持你现有规则不变）
-    // start 上升沿后延迟 10 周期，在 INIT(en_init=1) 内拉高 Init_Valid
-    // 离开 INIT(en_init=0) 清零，等待下一轮 start
-    // -------------------------------------------------
+    // Init_Valid：start 后延�?10 周期，在 en_init=1 时拉�?    // -------------------------------------------------
     localparam int INIT_DELAY_CYCLES = 10;
     localparam int ICW = (INIT_DELAY_CYCLES < 1) ? 1 : $clog2(INIT_DELAY_CYCLES + 1);
-    localparam int unsigned INIT_M1_INT = (INIT_DELAY_CYCLES < 1) ? 0 : (INIT_DELAY_CYCLES - 1);
-    localparam logic [ICW-1:0] INIT_DELAY_MINUS1 = INIT_M1_INT[ICW-1:0];
+    localparam logic [ICW-1:0] INIT_DELAY_MINUS1 = ICW'((INIT_DELAY_CYCLES <= 0) ? 0 : (INIT_DELAY_CYCLES - 1));
 
-    logic start_d_init;
-    logic start_seen_init;
+    logic start_d;
+    logic start_seen;
     logic [ICW-1:0] init_cnt;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            start_d_init    <= 1'b0;
-            start_seen_init <= 1'b0;
-            init_cnt        <= '0;
-            Init_Valid      <= 1'b0;
+            start_d    <= 1'b0;
+            start_seen <= 1'b0;
+            init_cnt   <= '0;
+            Init_Valid <= 1'b0;
         end else begin
-            start_d_init <= start;
+            start_d <= start;
 
-            // 记录 start 上升沿
-            if (start && !start_d_init)
-                start_seen_init <= 1'b1;
+            if (start && !start_d)
+                start_seen <= 1'b1;
 
-            // 只在 INIT(en_init=1) 内工作
             if (!en_init) begin
                 init_cnt   <= '0;
                 Init_Valid <= 1'b0;
             end else begin
-                if (start_seen_init && !Init_Valid) begin
-                    if (INIT_DELAY_CYCLES == 0) begin
+                if (start_seen && !Init_Valid) begin
+                    if (INIT_DELAY_CYCLES == 0)
                         Init_Valid <= 1'b1;
-                    end else if (init_cnt == INIT_DELAY_MINUS1) begin
+                    else if (init_cnt == INIT_DELAY_MINUS1)
                         Init_Valid <= 1'b1;
-                    end else begin
-                        init_cnt <= init_cnt + {{(ICW-1){1'b0}},1'b1};
-                    end
+                    else
+                        init_cnt <= init_cnt + 1'b1;
                 end
+            end
 
-                // 可选：拉高后清 start_seen_init
-                if (Init_Valid)
-                    start_seen_init <= 1'b0;
+            if (finish) begin
+                start_seen <= 1'b0;
+                init_cnt   <= '0;
+                Init_Valid <= 1'b0;
             end
         end
     end
 
     // -------------------------------------------------
-    // 控制单元（按最新状态机图）
+    // iter_done_pulse：一次迭代完成（SCU 两路 done 同时到达）上升沿打一�?    // -------------------------------------------------
+    logic scu_done_all_d;
+    wire  scu_done_all = (SCU_Done_s & SCU_Done_p);
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            scu_done_all_d  <= 1'b0;
+            iter_done_pulse <= 1'b0;
+        end else begin
+            scu_done_all_d  <= scu_done_all;
+            iter_done_pulse <= scu_done_all & ~scu_done_all_d;
+        end
+    end
+
     // -------------------------------------------------
+    // End_valid：★只在“最后一次迭代完成后”启动延时计�?    // 条件：iter_done_pulse && all_Z_k_read
+    // -------------------------------------------------
+    localparam int EWC = 1;
+    logic end_valid_d;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            End_valid <= 1'b0;
+            end_valid_d <= 1'b0;
+        end else begin
+            end_valid_d <= all_iter_done;
+            
+            if (finish) begin
+                End_valid <= 1'b0;
+            end else if (all_iter_done && !end_valid_d) begin
+                // Rising edge of all_iter_done: trigger End_valid
+                End_valid <= 1'b1;
+            end
+        end
+    end
+
+    // -------------------------------------------------
+    // 控制单元（start �?core �?start：即 filter_start_pulse�?    // -------------------------------------------------
     KF_ControlUnit u_KF_ControlUnit (
         .clk        (clk),
         .rst_n      (rst_n),
@@ -215,8 +234,9 @@ module kalman_core #(
     );
 
     // -------------------------------------------------
-    // F 矩阵生成
+    // F matrix
     // -------------------------------------------------
+    logic F_finish;
     F_make u_Fmake (
         .clk    (clk),
         .rst_n  (rst_n),
@@ -226,33 +246,9 @@ module kalman_core #(
     );
 
     // -------------------------------------------------
-    // 各阶段模块（保持你的连线风格，不做结构性改动）
+    // ★关键：模块�?done/enable 接线修正
     // -------------------------------------------------
-    StateUpdate u_StateUpdator (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .F         (F),
-        .X_kk      (X_kk),
-        .X_k1k     (X_k1k),
-        .CKG_Done  (en_ckg),
-        .MDI_Valid (MDI_Valid),
-        .SCU_Done  (SCU_Done_s)
-    );
-
-    KalmanGainCalculator #(
-        .DWIDTH(64)
-    ) u_KalmanGainCalc (
-        .clk      (clk),
-        .rst_n    (rst_n),
-        .Q_k      (Q_k),
-        .delta_t  (deltat),
-        .P_k1k1   (P_k1k1),
-        .R_k      (R_k),
-        .K_k      (K_k),
-        .SP_Done  (en_sp),
-        .CKG_Done (CKG_Done)
-    );
-
+    // StatePredictor：在 S_SP 运行，输�?SP_Done
     StatePredictor #(
         .VEC_WIDTH(64),
         .MAT_DIM  (12)
@@ -263,10 +259,41 @@ module kalman_core #(
         .Z_k        (Z_k),
         .X_kk1      (X_kk1),
         .X_kk       (X_kk),
-        .Init_Valid (en_sp),     // 维持你当前用法：预测态使能
+        .Init_Valid (en_sp),     // ★用 en_sp 作为 SP 阶段使能
         .SP_DONE    (SP_Done)
     );
 
+    // KalmanGainCalculator：用 SP_Done 启动，输�?CKG_Done
+    KalmanGainCalculator #(
+        .DWIDTH(64)
+    ) u_KalmanGainCalc (
+        .clk      (clk),
+        .rst_n    (rst_n),
+        .delta_t  (deltat),
+
+        .SP_Done  (SP_Done),     // ★必须接真正�?SP_Done
+        .CKG_Done (CKG_Done),
+
+        .P_k1k1   (P_k1k1),
+        .Q_k      (Q_k),
+        .R_k      (R_k),
+
+        .K_k      (K_k)
+    );
+
+    // StateUpdate：用 CKG_Done 启动，输�?SCU_Done_s
+    StateUpdate u_StateUpdator (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .F         (F),
+        .X_kk      (X_kk),
+        .X_k1k     (X_k1k),
+        .CKG_Done  (CKG_Done),   // ★接真正 CKG_Done
+        .MDI_Valid (MDI_Valid),
+        .SCU_Done  (SCU_Done_s)
+    );
+
+    // CovarianceUpdate：用 CKG_Done 启动，输�?SCU_Done_p
     CovarianceUpdate #(
         .STATE_DIM(STATE_DIM),
         .DWIDTH   (64)
@@ -277,12 +304,45 @@ module kalman_core #(
         .R_k      (R_k),
         .P_kk1    (P_kk1),
         .P_kk     (P_kk),
-        .CKG_Done (en_ckg),
+        .CKG_Done (CKG_Done),    // ★接真正 CKG_Done
         .SCU_Done (SCU_Done_p)
     );
 
     // -------------------------------------------------
-    // 延时单元（保留）
+    // ★新增：StateCovarainceOutput - �?P_kk �?X_k1k 写入 AXI 内存
+    // -------------------------------------------------
+    StateCovarainceOutput #(
+        .STATE_DIM(STATE_DIM),
+        .MEASURE_DIM(MEASURE_DIM),
+        .DATA_WIDTH(64),
+        .MAX_ITER(50)
+    ) u_SCO_Output (
+        .clk(clk),
+        .rst_n(rst_n),
+        .en_sco(en_sco),           // From FSM: S_SCO state enable
+        .P_kk(P_kk),               // Covariance matrix to write
+        .X_k1k(X_k1k),             // State vector to write
+        .axi_awaddr(sco_axi_awaddr),
+        .axi_awlen(sco_axi_awlen),
+        .axi_awsize(sco_axi_awsize),
+        .axi_awburst(sco_axi_awburst),
+        .axi_awvalid(sco_axi_awvalid),
+        .axi_awready(sco_axi_awready),
+        .axi_wdata(sco_axi_wdata),
+        .axi_wstrb(sco_axi_wstrb),
+        .axi_wvalid(sco_axi_wvalid),
+        .axi_wready(sco_axi_wready),
+        .axi_wlast(sco_axi_wlast),
+        .axi_bresp(sco_axi_bresp),
+        .axi_bvalid(sco_axi_bvalid),
+        .axi_bready(sco_axi_bready),
+        .sco_done(sco_done_signal),
+        .iteration_out(iteration_cnt_sco),
+        .all_done(all_iter_done)
+    );
+
+    // -------------------------------------------------
+    // Delay units（保持你原结构）
     // -------------------------------------------------
     logic [63:0] Xk1k_delay [STATE_DIM-1:0][0:0];
     logic [63:0] Xkk1_delay [STATE_DIM-1:0][0:0];

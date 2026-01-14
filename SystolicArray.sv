@@ -65,6 +65,7 @@ if (N == 12) begin : GEN_TILED_12x12_T6
             tile_enb_1   = enb_1;
             tile_enb_2_6 = enb_2_6;
         end else begin
+            // tile j=1 对应全局�?6..11：统一�?enb_7_12 控制
             tile_enb_1   = enb_7_12;
             tile_enb_2_6 = enb_7_12;
         end
@@ -78,13 +79,13 @@ if (N == 12) begin : GEN_TILED_12x12_T6
         base_k = (tk ? T : 0);
 
         for (int i = 0; i < T; i++) begin
-            for (int k = 0; k < T; k++) begin
-                a_tile[i][k] = a_row[base_i + i][base_k + k];
+            for (int k2 = 0; k2 < T; k2++) begin
+                a_tile[i][k2] = a_row[base_i + i][base_k + k2];
             end
         end
-        for (int k = 0; k < T; k++) begin
+        for (int k2 = 0; k2 < T; k2++) begin
             for (int j = 0; j < T; j++) begin
-                b_tile[k][j] = b_col[base_k + k][base_j + j];
+                b_tile[k2][j] = b_col[base_k + k2][base_j + j];
             end
         end
     end
@@ -109,17 +110,19 @@ if (N == 12) begin : GEN_TILED_12x12_T6
 
     // ---------- single fp_adder for accumulation (tk=1) ----------
     logic              add_finish;
-    logic              add_valid_r;
+    logic              add_go;      // 1-cycle pulse
+    logic              add_busy;    // wait finish
     logic [DWIDTH-1:0] add_a_r, add_b_r;
     wire  [DWIDTH-1:0] add_y;
 
-    fp_adder u_add (
-        .clk    ( clk        ),
-        .a      ( add_a_r     ),
-        .b      ( add_b_r     ),
-        .valid  ( add_valid_r ),
-        .finish ( add_finish  ),
-        .result ( add_y       )
+    fp_adder u_add (.clk(clk), 
+    // .rst_n(rst_n),
+        // .rst_n  ( rst_n ),
+        .a      ( add_a_r ),
+        .b      ( add_b_r ),
+        .valid  ( add_go  ),
+        .finish ( add_finish ),
+        .result ( add_y )
     );
 
     // ---------- accumulation indices ----------
@@ -140,24 +143,28 @@ if (N == 12) begin : GEN_TILED_12x12_T6
 
     state_t st;
 
-    // core6 state outputs（只驱动 core6_*，避免多驱动）
+    // core6 control (改进握手：需要让 SystolicArrayCore 看到完整的脉�?
     always_comb begin
         core6_load_en   = 1'b0;
         core6_rst_n_int = 1'b0;
 
-        // RUN_TILE：跑 core
         if (st == S_RUN_TILE) begin
             core6_rst_n_int = 1'b1;
-            core6_load_en   = 1'b1;
-        end
-        // LATCH_TILE：保持不复位，避免 latch 时 core 输出被清
-        else if (st == S_LATCH_TILE) begin
+            core6_load_en   = 1'b1; // 上升沿启动计�?        
+        end else if (st == S_LATCH_TILE) begin
             core6_rst_n_int = 1'b1;
-            core6_load_en   = 1'b0;
+            core6_load_en   = 1'b0; // 拉低（等待计算完成）
+        end else if (st == S_DONE) begin
+            // �?�?S_DONE 重新拉高 core6_load_en，产生上升沿
+            // 这样 SystolicArrayCore 可以看到 load_en �?0�?�? 完整脉冲
+            core6_rst_n_int = 1'b1;
+            core6_load_en   = 1'b1;
+        end else begin
+            core6_rst_n_int = 1'b1;
         end
     end
 
-    // main FSM + adder transaction（adder 只在 always_ff 里驱动，彻底消除 multi-driver）
+    // main FSM
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st <= S_IDLE;
@@ -166,7 +173,8 @@ if (N == 12) begin : GEN_TILED_12x12_T6
 
             cal_finish  <= 1'b0;
 
-            add_valid_r <= 1'b0;
+            add_go      <= 1'b0;
+            add_busy    <= 1'b0;
             add_a_r     <= '0;
             add_b_r     <= '0;
 
@@ -175,10 +183,12 @@ if (N == 12) begin : GEN_TILED_12x12_T6
                 c_out[i][j] <= '0;
 
         end else begin
-            if (!load_en) cal_finish <= 1'b0;
+            // default
+            add_go <= 1'b0;
 
             unique case (st)
             S_IDLE: begin
+                cal_finish <= 1'b0;
                 if (start) begin
                     for (int i=0;i<N;i++)
                       for (int j=0;j<N;j++)
@@ -248,24 +258,25 @@ if (N == 12) begin : GEN_TILED_12x12_T6
                 end
             end
 
-            // 发起一次加法：锁存输入并把 valid 拉高（保持到 finish）
+            // 发起一次加法：只打一�?valid，然后等 finish
             S_ACCUM_START: begin
-                if (!add_valid_r) begin
+                if (!add_busy) begin
                     int base_i, base_j, gi, gj;
                     base_i = (ti ? T : 0);
                     base_j = (tj ? T : 0);
                     gi     = base_i + ai;
                     gj     = base_j + aj;
 
-                    add_a_r     <= c_out[gi][gj];
-                    add_b_r     <= tile_buf[ai][aj];
-                    add_valid_r <= 1'b1;
+                    add_a_r  <= c_out[gi][gj];
+                    add_b_r  <= tile_buf[ai][aj];
+                    add_go   <= 1'b1;   // 1-cycle pulse
+                    add_busy <= 1'b1;
+                    st       <= S_ACCUM_WAIT;
                 end
-                st <= S_ACCUM_WAIT;
             end
 
             S_ACCUM_WAIT: begin
-                if (add_valid_r && add_finish) begin
+                if (add_busy && add_finish) begin
                     int base_i, base_j, gi, gj;
                     base_i = (ti ? T : 0);
                     base_j = (tj ? T : 0);
@@ -273,7 +284,7 @@ if (N == 12) begin : GEN_TILED_12x12_T6
                     gj = base_j + aj;
 
                     c_out[gi][gj] <= add_y;
-                    add_valid_r   <= 1'b0;
+                    add_busy      <= 1'b0;
 
                     if (aj == T-1) begin
                         aj <= '0;
@@ -304,10 +315,14 @@ if (N == 12) begin : GEN_TILED_12x12_T6
                     st <= S_START_TILE;
                 end
             end
-
+      
             S_DONE: begin
-                cal_finish <= 1'b1;
-                if (!load_en) st <= S_IDLE;
+                if (!load_en) begin
+                    cal_finish <= 1'b0;
+                    st         <= S_IDLE;
+                end else begin
+                    cal_finish <= 1'b1;
+                end
             end
 
             default: st <= S_IDLE;
@@ -336,3 +351,4 @@ end
 endgenerate
 
 endmodule
+

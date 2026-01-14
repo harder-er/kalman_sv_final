@@ -6,9 +6,9 @@ module KalmanFilterTop #(
     parameter real deltat         = 0.01,
     parameter int  MAX_ITERATIONS = 100,
 
-    // ★新增：End_valid 触发门限（all_Z_k_read 连续为1的周期数）
+    // ★End_valid 触发门限（由 core 内部实现：all_Z_k_read 连续�?的周期数�?    
     parameter int  END_VALID_STABLE_CYCLES = 50
-) (
+) ( 
     // system
     input  logic clk,
     input  logic rst_n,
@@ -121,9 +121,70 @@ module KalmanFilterTop #(
 
   wire filter_start = filter_start_pulse;
 
-  // 写回：先用 filter_done 触发
+  // 写回：先�?filter_done 触发
   logic write_results_en;
   assign write_results_en = filter_done;
+
+  // =========================================================
+  // ★新增：来自 core 的关键信�?  // - SP_Done: 状态预测完�?  // - iter_done_pulse: 迭代完成脉冲（SCU_done 上升�?1 拍）
+  // =========================================================
+  logic core_sp_done;     // ★新增：�?kalman_core 导出�?SP_Done
+  logic iter_done_pulse;
+
+  // =========================================================
+  // ★修改：MDI valid 保持型（�?SP_Done 拉高，由 iter_done_pulse 拉低�?  
+  // - SP_Done 上升后拉高（确保测量数据已准备好�?  // - iter_done_pulse 到达时拉低（本次迭代消费完毕�? 
+  // - 确保测量数据有效信号与迭代周期同?  // =========================================================
+  logic mdi_valid_hold;
+  logic sp_done_d;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      mdi_valid_hold <= 1'b0;
+      sp_done_d      <= 1'b0;
+    end else begin
+      sp_done_d <= core_sp_done;  // 延迟一拍用于边沿检�?
+      if (!filter_active || filter_done) begin
+        mdi_valid_hold <= 1'b0;
+      end else if (filter_start_pulse) begin
+        mdi_valid_hold <= 1'b0;
+      end else if (iter_done_pulse) begin
+        mdi_valid_hold <= 1'b0;     // 本次迭代结束，清零等待下一�?SP_Done
+      end else if (core_sp_done && !sp_done_d) begin
+        // SP_Done 上升沿：状态预测完成，拉高测量有效
+        mdi_valid_hold <= 1'b1;
+      end
+    end
+  end
+
+  // =========================================================
+  // ★Zk request pacing：只在“启�?迭代完成”时请求一�?  // request 是电平保持：直到 Reader 真正吐出 Z_k_valid_out
+  // =========================================================
+  logic zk_req_pending;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      zk_req_pending <= 1'b0;
+    end else begin
+      if (filter_start_pulse) begin
+        // 启动时先要第一�?Zk（为�?次迭代准备）
+        zk_req_pending <= 1'b1;
+      end else if (!filter_active || filter_done || all_Z_k_read) begin
+        zk_req_pending <= 1'b0;
+      end else begin
+        // 收到 Zk_valid 后清 pending（本次请求完成）
+        if (Z_k_valid_internal) begin
+          zk_req_pending <= 1'b0;
+        end
+        // 只有当一次迭代完成，才请求下一�?Zk
+        else if (!zk_req_pending && iter_done_pulse) begin
+          zk_req_pending <= 1'b1;
+        end
+      end
+    end
+  end
+
+  assign Z_k_request_next = zk_req_pending;
 
   // =========================
   // Reader0: initial params
@@ -169,26 +230,9 @@ module KalmanFilterTop #(
   );
 
   // =========================
-  // Zk request pacing
-  // =========================
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      Z_k_request_next <= 1'b0;
-    end else begin
-      if (!filter_active || filter_done || all_Z_k_read) begin
-        Z_k_request_next <= 1'b0;
-      end else begin
-        if (!Z_k_request_next)
-          Z_k_request_next <= 1'b1;
-        if (Z_k_valid_internal)
-          Z_k_request_next <= 1'b0;
-      end
-    end
-  end
-
-  // =========================
-  // Reader1: Zk
-  // =========================
+  // Reader1: Zk (prefetch FIFO)
+  // - start_read �?filter_active 电平
+  // - request_next_zk 用我们新�?Z_k_request_next（只在迭代完成后触发�?  // =========================
   DDR4_Reader_Zk #(
       .MEASURE_DIM(MEASURE_DIM),
       .MAX_ITERATIONS(MAX_ITERATIONS),
@@ -250,25 +294,49 @@ module KalmanFilterTop #(
 
   // =========================
   // kalman core
+  // - En_MDI 改用 mdi_valid_hold（保持型�?  // - 取回 iter_done_pulse（用于触发下一�?Zk 请求�?  // - AXI Master 2 用于输出 P_kk �?X_k1k
   // =========================
   kalman_core #(
       .STATE_DIM(STATE_DIM),
       .MEASURE_DIM(MEASURE_DIM),
-      .END_VALID_STABLE_CYCLES(END_VALID_STABLE_CYCLES)   // ★透传参数
+      .END_VALID_STABLE_CYCLES(END_VALID_STABLE_CYCLES)
   ) kalman (
-      .clk          (clk),
-      .rst_n        (rst_n),
-      .start        (filter_start),           // 1-cycle pulse after ready
-      .Q_k          (Q_k_internal),
-      .R_k          (R_k_internal),
-      .Z_k          (Z_k_internal),
-      .En_MDI       (Z_k_valid_internal),
-      .X_00         (X_00),
-      .P_00         (P_00),
-      .all_Z_k_read (all_Z_k_read),           // ★结束条件输入
-      .filter_done  (filter_done),
-      .X_kkout      (X_kk_out_internal),
-      .P_kkout      (P_kk_out_internal)
+      .clk            (clk),
+      .rst_n          (rst_n),
+      .start          (filter_start),
+
+      .Q_k            (Q_k_internal),
+      .R_k            (R_k_internal),
+
+      .Z_k            (Z_k_internal),
+      .En_MDI         (mdi_valid_hold),     // ★保持型测量有效
+      .X_00           (X_00),
+      .P_00           (P_00),
+
+      .all_Z_k_read   (all_Z_k_read),
+
+      .SP_Done        (core_sp_done),       // ★新增：接收 SP_Done 用于控制 mdi_valid_hold
+      .iter_done_pulse(iter_done_pulse),    // ★新增：迭代完成脉冲
+
+      .filter_done    (filter_done),
+      .X_kkout        (X_kk_out_internal),
+      .P_kkout        (P_kk_out_internal),
+      
+      // AXI Master 2: Write interface from StateCovarainceOutput
+      .m2_axi_awaddr  (m2_axi_awaddr),
+      .m2_axi_awlen   (m2_axi_awlen),
+      .m2_axi_awsize  (m2_axi_awsize),
+      .m2_axi_awburst (m2_axi_awburst),
+      .m2_axi_awvalid (m2_axi_awvalid),
+      .m2_axi_awready (m2_axi_awready),
+      .m2_axi_wdata   (m2_axi_wdata),
+      .m2_axi_wstrb   (m2_axi_wstrb),
+      .m2_axi_wvalid  (m2_axi_wvalid),
+      .m2_axi_wready  (m2_axi_wready),
+      .m2_axi_wlast   (m2_axi_wlast),
+      .m2_axi_bresp   (m2_axi_bresp),
+      .m2_axi_bvalid  (m2_axi_bvalid),
+      .m2_axi_bready  (m2_axi_bready)
   );
 
 endmodule

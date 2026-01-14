@@ -1,534 +1,545 @@
-`timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 2025/03/10 17:01:06
-// Design Name: 
-// Module Name: MatrixInverseUnit  // 矩阵求逆单元模块
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 实现3x3矩阵求逆运算，支持浮点数据格式的流水线处理
-// 
-// Dependencies: 依赖CEU系列浮点运算单元（CEU_a, CEU_d, CEU_division等）
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments: 采用三级流水线架构，支持矩阵元素的并行计算
-// 
-//////////////////////////////////////////////////////////////////////////////////
-
+`timescale 1ns/1ps
+`default_nettype none
+`default_nettype wire
 
 module MatrixInverseUnit #(
-    parameter DWIDTH = 64  // 数据宽度（浮点精度位宽）
+    parameter int DWIDTH = 64
 )(
-    input  logic                clk                     ,      
-    input  logic                rst_n                   ,      
-    input  logic                valid                   ,      
-    input  logic [DWIDTH-1:0]   P_k1k1 [0:12-1][0:12-1] ,   //p_k-1,k-1
-    input  logic [DWIDTH-1:0]   Q_k [0:12-1][0:12-1]    ,  
-    input  logic [DWIDTH-1:0]   R_k [0:5][0:5]          ,  
-    output logic                finish                  ,   
+    input  logic                clk,
+    input  logic                rst_n,
+
+    // start（上层给 SP_Done 也行，但建议�?“start_pulse/�?pending+tp_valid�?触发�?    
+    input  logic                valid,
+
+    // TimeParamsSeq ready（非常关键：time 系数没好之前不要启动 CEU�?    
+    input  logic                tp_valid,
+
+    // time coefficients (来自 TimeParamsSeq)
+    input  logic [DWIDTH-1:0]   delta_t,
+    input  logic [DWIDTH-1:0]   delta_t2,        // 2*dt
+    input  logic [DWIDTH-1:0]   dt2,             // dt^2
+    input  logic [DWIDTH-1:0]   half_dt2,        // 1/2 dt^2
+    input  logic [DWIDTH-1:0]   half_dt3,        // 1/2 dt^3
+    input  logic [DWIDTH-1:0]   three_dt3,       // 1/3 dt^3
+    input  logic [DWIDTH-1:0]   sixth_dt3,       // 1/6 dt^3
+    input  logic [DWIDTH-1:0]   quarter_dt4,     // 1/4 dt^4
+    input  logic [DWIDTH-1:0]   twive_dt4,       // 1/12 dt^4
+    input  logic [DWIDTH-1:0]   five12_dt4,      // 5/12 dt^4
+    input  logic [DWIDTH-1:0]   six_dt5,         // 1/6 dt^5
+    input  logic [DWIDTH-1:0]   twleve_dt5,      // 1/12 dt^5
+    input  logic [DWIDTH-1:0]   thirtysix_dt6,   // 1/36 dt^6
+
+    input  logic [DWIDTH-1:0]   P_k1k1 [0:12-1][0:12-1],
+    input  logic [DWIDTH-1:0]   Q_k    [0:12-1][0:12-1],
+    input  logic [DWIDTH-1:0]   R_k    [0:5][0:5],
+
+    output logic                finish,          // 1-cycle pulse
     output logic [DWIDTH-1:0]   inv_matrix [0:5][0:5]
 );
 
-
-// ==== 中间结果寄存器（对应图中Intermediate Result Reg）
-//-----------------------------------------------------------------
-logic [DWIDTH-1:0] a, b, c, d, e, f, x, y, z;  // 矩阵运算中间变量
-
-// ==== CEU模块实例化（按流程图处理顺序）
-CEU_a #(
-    .DBL_WIDTH(64)
-) u_CEU_a (
-    .clk          (clk),
-    .rst_n        (rst_n),
-    // 动态输入：替换为 P_k1k1[i][j] 形式
-    // .Theta_1_1    (P_k1k1[0][0]),
-    .Theta_4_1    (P_k1k1[3][0]),
-    .Theta_7_1    (P_k1k1[6][0]),
-    .Theta_4_4    (P_k1k1[3][3]),
-    .Theta_10_1   (P_k1k1[9][0]),
-    .Theta_7_4    (P_k1k1[6][3]),
-    .Theta_10_4   (P_k1k1[9][3]),
-    .Theta_7_7    (P_k1k1[6][6]),
-    .Theta_10_7   (P_k1k1[9][6]),
-    .Theta_10_10  (P_k1k1[9][9]),
-    .Q_1_1        (Q_k[0][0]),
-    .R_1_1        (R_k[0][0]),
-    // 固定参数
-    .dt_1   (delta_t2           ),
-    .dt_2   (delta_t_sq         ),
-    .dt_3   (delta_t_cu         ),
-    .dt_4   (delta_t_qu         ),
-    .dt_5   (delta_t_qi         ),
-    .dt_6   (delta_t_sx         ),
-    // 输出 
-    .a_out        (a            ),
-    .valid_out    (valid_out    )
-);
-
-CEU_a #(
-    .DBL_WIDTH(64)
-) u_CEU_b (
-    .clk          (clk),
-    .rst_n        (rst_n),
-    // 动态输入：替换为 P_k1k1[i][j] 形式
-    .Theta_4_1    (P_k1k1[4][1]),
-    .Theta_7_1    (P_k1k1[7][1]),
-    .Theta_4_4    (P_k1k1[4][4]),
-    .Theta_10_1   (P_k1k1[10][1]),
-    .Theta_7_4    (P_k1k1[7][4]),
-    .Theta_10_4   (P_k1k1[10][4]),
-    .Theta_7_7    (P_k1k1[7][7]),
-    .Theta_10_7   (P_k1k1[10][7]),
-    .Theta_10_10  (P_k1k1[10][10]),
-    .Q_1_1        (Q_k[1][1]),
-    .R_1_1        (R_k[1][1]),
-    // 固定参数
-    .dt_1     (delta_t2),
-    .dt_2   (delta_t_sq),
-    .dt_3   (delta_t_cu),
-    .dt_4   (delta_t_qu),
-    .dt_5   (delta_t_qi),
-    .dt_6   (delta_t_sx),
-    // 输出
-    .a_out        (b),
-    .valid_out    (valid_out)
-);
-    
-
-CEU_a #(
-    .DBL_WIDTH(64)
-) u_CEU_c (
-    .clk          (clk),
-    .rst_n        (rst_n),
-    // 动态输入：替换为 P_k1k1[i][j] 形式
-    // .Theta_1_1    (P_k1k1[2][2]),
-    .Theta_4_1    (P_k1k1[5][2]),
-    .Theta_7_1    (P_k1k1[8][2]),
-    .Theta_4_4    (P_k1k1[5][5]),
-    .Theta_10_1   (P_k1k1[11][2]),
-    .Theta_7_4    (P_k1k1[8][5]),
-    .Theta_10_4   (P_k1k1[11][5]),
-    .Theta_7_7    (P_k1k1[8][8]),
-    .Theta_10_7   (P_k1k1[11][8]),
-    .Theta_10_10  (P_k1k1[11][11]),
-    .Q_1_1        (Q_k[2][2]),
-    .R_1_1        (R_k[2][2]),
-    // 固定参数
-    .dt_1     (delta_t2),
-    .dt_2   (delta_t_sq),
-    .dt_3   (delta_t_cu),
-    .dt_4   (delta_t_qu),
-    .dt_5   (delta_t_qi),
-    .dt_6   (delta_t_sx),
-    // 输出
-    .a_out        (c),
-    .valid_out    (valid_out)
-);
-
-// ---------------------------------------------------------
-// 在上层模块中例化 CEU_d（"d" 通道核心计算）
-// ---------------------------------------------------------
-
-// 把所有 (i,j) 改为 (i-1, j-1)
-CEU_d #(
-    .DBL_WIDTH(64)
-) u_CEU_d (
-    .clk         (clk),
-    .rst_n       (rst_n),
-    // 动态输入：索引均减一
-    .Theta_10_7  (P_k1k1[9][6]),    // 10→9, 7→6
-    .Theta_7_4   (P_k1k1[6][3]),    // 7→6, 4→3
-    .Theta_10_4  (P_k1k1[9][3]),    // 10→9, 4→3
-    .Theta_4_7   (P_k1k1[3][6]),    // 4→3, 7→6
-    .Theta_10_10 (P_k1k1[9][9]),    // 10→9, 10→9
-    .Theta_4_4   (P_k1k1[3][3]),    // 4→3, 4→3
-    .Q_4_4       (Q_k[3][3]),        // 4→3, 4→3
-    .R_4_4       (R_k[3][3]),        // 4→3, 4→3
-    // 固定时间参数
-    .delta_t2    (delta_t2),
-    .delta_t_sq  (delta_t_sq),
-    .delta_t_hcu (delta_t_hcu),
-    .delta_t_qr  (delta_t_qr),
-    // 输出
-    .d           (d),
-    .valid_out   (valid_minus)
-);
-
-
-CEU_d #(
-    .DBL_WIDTH(64)
-) u_CEU_e (
-    .clk         (clk),
-    .rst_n       (rst_n),
-    // 动态输入：按 "d" 通道对应的 Θ
-    .Theta_10_7  (P_k1k1[10][7]),    // 或者你自己的信号名
-    .Theta_7_4   (P_k1k1[7][4]),
-    .Theta_10_4  (P_k1k1[10][4]),
-    .Theta_4_7   (P_k1k1[4][7]),
-    .Theta_10_10 (P_k1k1[10][10]),
-    .Theta_4_4   (P_k1k1[4][4]),
-    .Q_4_4       (Q_k[4][4]),
-    .R_4_4       (R_k[4][4]),
-    // 固定时间参数（上层预先计算或定义）
-    .delta_t2    (delta_t2),
-    .delta_t_sq  (delta_t_sq),
-    .delta_t_hcu (delta_t_hcu),
-    .delta_t_qr  (delta_t_qr),
-    // 输出
-    .d           (e),
-    .valid_out   (d_valid)          // 或者 valid_d，根据你的命名
-);
-
-// 把所有 (i,j) 改为 (i+1, j+1)
-CEU_d #(
-    .DBL_WIDTH(64)
-) u_CEU_f (
-    .clk         (clk),
-    .rst_n       (rst_n),
-    // 动态输入：索引均加一
-    .Theta_10_7  (P_k1k1[11][8]),   // 10→11, 7→8
-    .Theta_7_4   (P_k1k1[8][5]),    // 7→8, 4→5
-    .Theta_10_4  (P_k1k1[11][5]),   // 10→11, 4→5
-    .Theta_4_7   (P_k1k1[5][8]),    // 4→5, 7→8
-    .Theta_10_10 (P_k1k1[11][11]),  // 10→11, 10→11
-    .Theta_4_4   (P_k1k1[5][5]),    // 4→5, 4→5
-    .Q_4_4       (Q_k[5][5]),        // 4→5, 4→5
-    .R_4_4       (R_k[5][5]),        // 4→5, 4→5
-    // 固定时间参数
-    .delta_t2    (delta_t2),
-    .delta_t_sq  (delta_t_sq),
-    .delta_t_hcu (delta_t_hcu),
-    .delta_t_qr  (delta_t_qr),
-    // 输出
-    .d           (f),
-    .valid_out   (valid_plus)
-);
-
-// ---------------------------------------------------------
-// CEU_x 模块例化
-// ---------------------------------------------------------
-
-CEU_x #(
-    .DBL_WIDTH(64)
-) u_CEU_x (
-    .clk        (clk),
-    .rst_n      (rst_n),
-
-    .Theta_1_7  (P_k1k1[0][6]),   // 1→0, 7→6
-    .Theta_4_4  (P_k1k1[3][3]),   // 4→3, 4→3
-
-    .Theta_7_4  (P_k1k1[6][3]),   // 7→6, 4→3
-    .Theta_10_4 (P_k1k1[9][3]),   // 10→9, 4→3
-    .Theta_7_7  (P_k1k1[6][6]),   // 7→6, 7→6
-
-    .Theta_10_1 (P_k1k1[9][0]),   // 10→9, 1→0
-
-    .Theta_10_7 (P_k1k1[9][6]),   // 10→9, 7→6
-    .Theta_10_10(P_k1k1[9][9]),   // 10→9, 10→9
-    .Theta_1_4  (P_k1k1[0][3]),   // 1→0, 4→3
-
-    .Q_1_4      (Q_k[0][3]),       // 1→0, 4→3
-    .R_1_4      (R_k[0][3]),       // 1→0, 4→3
-
-    .delta_t    (delta_t),
-    .half_dt2   (delta_t2),
-    .sixth_dt3 (delta_t_sq),
-    .five12_dt4 (delta_t_cu),
-    .one12_dt5 (delta_t_qu),
-
-    .x          (x),
-    .valid_out  (x_valid_minus1)
-);
-
-
-CEU_x #(
-    .DBL_WIDTH(64)
-) u_CEU_y (
-    .clk        (clk),
-    .rst_n      (rst_n),
-
-    .Theta_1_7  (P_k1k1[1][7]),   
-    .Theta_4_4  (P_k1k1[4][4]),   
-
-    .Theta_7_4  (P_k1k1[7][4]),   
-    .Theta_10_4 (P_k1k1[10][4]),   
-    .Theta_7_7  (P_k1k1[7][7]),   
-
-    .Theta_10_1 (P_k1k1[10][1]),  
-
-    .Theta_10_7 (P_k1k1[10][7]),    
-    .Theta_10_10(P_k1k1[10][10]),
-    .Theta_1_4  (P_k1k1[1][4]),  
-
-    // 噪声项 Q/R
-    .Q_1_4      (Q_k[1][4]),       // Q[1,7]
-    .R_1_4      (R_k[1][4]),       // R[1,7]
-
-    // 固定时间参数
-    .delta_t    (delta_t),
-    .half_dt2   (delta_t2),
-    .sixth_dt3 (delta_t_sq),
-    .five12_dt4 (delta_t_cu),
-    .one12_dt5 (delta_t_qu),
-
-    // 输出
-    .x          (y),
-    .valid_out  (x_valid)
-);
-
-CEU_x #(
-    .DBL_WIDTH(64)
-) u_CEU_z (
-    .clk        (clk),
-    .rst_n      (rst_n),
-
-    .Theta_1_7  (P_k1k1[2][8]),   // 1→2, 7→8
-    .Theta_4_4  (P_k1k1[5][5]),   // 4→5, 4→5
-
-    .Theta_7_4  (P_k1k1[8][5]),   // 7→8, 4→5
-    .Theta_10_4 (P_k1k1[11][5]),  // 10→11, 4→5
-    .Theta_7_7  (P_k1k1[8][8]),   // 7→8, 7→8
-
-    .Theta_10_1 (P_k1k1[11][2]),  // 10→11, 1→2
-
-    .Theta_10_7 (P_k1k1[11][8]),  // 10→11, 7→8
-    .Theta_10_10(P_k1k1[11][11]), // 10→11, 10→11)
-    .Theta_1_4  (P_k1k1[2][5]),   // 1→2, 4→5
-
-    .Q_1_4      (Q_k[2][5]),       // 1→2, 4→5
-    .R_1_4      (R_k[2][5]),       // 1→2, 4→5
-
-    .delta_t    (delta_t),
-    .half_dt2   (delta_t2),
-    .sixth_dt3  (delta_t_sq),
-    .five12_dt4 (delta_t_cu),
-    .one12_dt5  (delta_t_qu),
-
-    .x          (z),
-    .valid_out  (x_valid_plus1)
-);
-
-// ================== 第二计算阶段：行列式计算 ==================
-// 计算α = a*d - x^2?（行列式核心项）
-logic [DWIDTH-1:0] alpha1, alpha2, alpha3;
-logic [DWIDTH-1:0] inv_alpha11, inv_alpha12, inv_alpha13;
-logic [DWIDTH-1:0] inv_alpha21, inv_alpha22, inv_alpha23;
-logic [DWIDTH-1:0] inv_alpha31, inv_alpha32, inv_alpha33;
-logic [DWIDTH-1:0] _inv_alpha13, _inv_alpha23, _inv_alpha33;
-logic valid_out1, valid_out2, valid_out3;
-
-CEU_alpha u_CEU_alpha1 (
-    .clk        (clk            ),
-    .rst_n      (rst_n          ),
-    .in1        (a              ),             // 第一行第一列乘积项
-    .in2        (d              ),             // 第二行第二列乘积项
-    .in3        (x              ),             // 交叉项平方
-    .out        (alpha1         ),          // 输出行列式值α
-    .valid_out  (valid_out1     )
-);
-CEU_alpha u_CEU_alpha2 (
-    .clk        (clk            ),
-    .rst_n      (rst_n          ),
-    .in1        (b              ),             // 第一行第一列乘积项
-    .in2        (e              ),             // 第二行第二列乘积项
-    .in3        (y              ),             // 交叉项平方
-    .out        (alpha2         ),          // 输出行列式值α
-    .valid_out   (valid_out2    )
-);
-
-CEU_alpha u_CEU_alpha3 (
-    .clk        (clk        ),
-    .rst_n      (rst_n      ),
-    .in1        (c          ),             // 第一行第一列乘积项
-    .in2        (f          ),             // 第二行第二列乘积项
-    .in3        (z          ),             // 交叉项平方
-    .out        (alpha3     ),          // 输出行列式值α
-    .valid_out  (valid_out3 )
-);
-logic valid_div;
-assign valid_div = valid & valid_out1 & valid_out2 & valid_out3; 
-// ================== 第三计算阶段：逆矩阵元素计算 ==================
-// 计算1/α（行列式倒数）——单个除法IP串行复用 9 次
-typedef enum logic [1:0] {DIV_IDLE, DIV_BUSY} div_state_e;
-div_state_e div_state;
-logic [3:0] div_idx;
-logic div_go, div_finish;
-logic [DWIDTH-1:0] div_num, div_den, div_q;
-
-CEU_division u_CEU_div_shared (
-    .clk        (clk),
-    .valid      (div_go),
-    .finish     (div_finish),
-    .numerator  (div_num),
-    .denominator(div_den),
-    .quotient   (div_q)
-);
-
-// 结果收集标志
-logic all_div_done;
-
-always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        div_state    <= DIV_IDLE;
-        div_idx      <= '0;
-        div_go       <= 1'b0;
-        all_div_done <= 1'b0;
-        {inv_alpha11, inv_alpha12, inv_alpha13,
-         inv_alpha21, inv_alpha22, inv_alpha23,
-         inv_alpha31, inv_alpha32, inv_alpha33} <= '{default:'0};
-    end else begin
-        div_go       <= 1'b0;
-        all_div_done <= 1'b0;
-
-        case (div_state)
-            DIV_IDLE: begin
-                div_idx <= '0;
-                if (valid_div) begin
-                    div_num <= a;      div_den <= alpha1; div_go <= 1'b1; div_state <= DIV_BUSY;
-                end
-            end
-
-            DIV_BUSY: begin
-                if (div_finish) begin
-                    case (div_idx)
-                        4'd0: inv_alpha11 <= div_q;
-                        4'd1: inv_alpha12 <= div_q;
-                        4'd2: inv_alpha13 <= div_q;
-                        4'd3: inv_alpha21 <= div_q;
-                        4'd4: inv_alpha22 <= div_q;
-                        4'd5: inv_alpha23 <= div_q;
-                        4'd6: inv_alpha31 <= div_q;
-                        4'd7: inv_alpha32 <= div_q;
-                        4'd8: inv_alpha33 <= div_q;
-                        default: ;
-                    endcase
-
-                    if (div_idx == 4'd8) begin
-                        div_state    <= DIV_IDLE;
-                        all_div_done <= 1'b1;
-                    end else begin
-                        div_idx <= div_idx + 1'b1;
-                        case (div_idx + 1'b1)
-                            4'd1: begin div_num <= d; div_den <= alpha1; end
-                            4'd2: begin div_num <= x; div_den <= alpha1; end
-                            4'd3: begin div_num <= b; div_den <= alpha2; end
-                            4'd4: begin div_num <= e; div_den <= alpha2; end
-                            4'd5: begin div_num <= y; div_den <= alpha2; end
-                            4'd6: begin div_num <= c; div_den <= alpha3; end
-                            4'd7: begin div_num <= f; div_den <= alpha3; end
-                            4'd8: begin div_num <= z; div_den <= alpha3; end
-                            default: begin div_num <= '0; div_den <= '0; end
-                        endcase
-                        div_go <= 1'b1;
-                    end
-                end
-            end
-        endcase
+    // ------------------------------------------------------------
+    // 0) start pending（解�?SP_Done 先到、tp_valid 后到会丢触发的问题）
+    // ------------------------------------------------------------
+    logic valid_d;
+    logic start_pulse;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) valid_d <= 1'b0;
+        else        valid_d <= valid;
     end
-end
+    assign start_pulse = valid & ~valid_d;
 
-// 三个 -x/-y/-z 的符号翻转在除法完成后统一触发
-logic fpsub13_finish,fpsub23_finish,fpsub33_finish;
-assign fpsub13_valid = all_div_done;
-assign fpsub23_valid = all_div_done;
-assign fpsub33_valid = all_div_done;
+    logic pending;
+    logic do_start;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) pending <= 1'b0;
+        else begin
+            if (start_pulse) pending <= 1'b1;
+            else if (do_start) pending <= 1'b0;
+        end
+    end
+    assign do_start = pending & tp_valid;  // tp_valid 起来才真的启�?
+    // ------------------------------------------------------------
+    // 1) CEU stage1：产�?a,b,c,d,e,f,x,y,z + valid_out
+    //    �?gated reset：未启动�?CEU 保持 reset，避免乱�?    // ------------------------------------------------------------
+    typedef enum logic [2:0] {
+        S_IDLE,
+        S_WAIT_STAGE1,
+        S_WAIT_ALPHA,
+        S_DIV,
+        S_WAIT_NEG,
+        S_WRITE,
+        S_DONE
+    } state_t;
 
-fp_suber u_fp_suber_x (
-    .clk        (clk            ),
-    .valid      (fpsub13_valid  ),
-    .finish     (fpsub13_finish ),
-    .a          (64'h0          ),
-    .b          (inv_alpha13    ),
-    .result     (_inv_alpha13   )
-);
+    state_t st;
 
-fp_suber u_fp_suber_y (
-    .clk        (clk            ),
-    .valid      (fpsub23_valid  ),
-    .finish     (fpsub23_finish ),
-    .a          (64'h0          ),
-    .b          (inv_alpha23    ),
-    .result     (_inv_alpha23   )
-);
+    logic ceu1_en, alpha_en;
+    logic rst_ceu1_n, rst_alpha_n;
+    assign rst_ceu1_n  = rst_n & ceu1_en;
+    assign rst_alpha_n = rst_n & alpha_en;
+    logic ceu1_start;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) ceu1_start <= 1'b0;
+        else        ceu1_start <= do_start;
+    end
 
-fp_suber u_fp_suber_z (
-    .clk        (clk            ),
-    .valid      (fpsub33_valid  ),
-    .finish     (fpsub33_finish ),
-    .a          (64'h0          ),
-    .b          (inv_alpha33    ),
-    .result     (_inv_alpha33   )
-);
-// ================== 输出阶段：逆矩阵元素合成 ==================
-// 计算逆矩阵第一行第一列元素：(d*e - y^2?)/α
-    // 声明：6×6 寄存器缓存
-    logic [DWIDTH-1:0] result_reg [0:5][0:5];
+    // stage1 wires + done flags
+    logic [DWIDTH-1:0] a_w,b_w,c_w,d_w,e_w,f_w,x_w,y_w,z_w;
+    logic v_a,v_b,v_c,v_d,v_e,v_f,v_x,v_y,v_z;
 
-    always_ff @(posedge clk) begin
+    logic [DWIDTH-1:0] a,b,c,d,e,f,x,y,z;
+    logic got_a,got_b,got_c,got_d,got_e,got_f,got_x,got_y,got_z;
+
+    wire stage1_done = got_a & got_b & got_c & got_d & got_e & got_f & got_x & got_y & got_z;
+
+    // ---- 这里保持你原来的 CEU 结构，但�?valid_out 分开、把 dt 映射修正 ----
+    CEU_a #(.DBL_WIDTH(64)) u_CEU_a (
+        .clk        (clk),
+        .rst_n      (rst_ceu1_n),
+        // .Theta_1_1  (P_k1k1[0][0]),
+        .Theta_4_1  (P_k1k1[3][0]),
+        .Theta_7_1  (P_k1k1[6][0]),
+        .Theta_4_4  (P_k1k1[3][3]),
+        .Theta_10_1 (P_k1k1[9][0]),
+        .Theta_7_4  (P_k1k1[6][3]),
+        .Theta_10_4 (P_k1k1[9][3]),
+        .Theta_7_7  (P_k1k1[6][6]),
+        .Theta_10_7 (P_k1k1[9][6]),
+        .Theta_10_10(P_k1k1[9][9]),
+        .Q_1_1      (Q_k[0][0]),
+        .R_1_1      (R_k[0][0]),
+        .dt_1       (delta_t2),
+        .dt_2       (dt2),
+        .dt_3       (three_dt3),
+        .dt_4       (twive_dt4),
+        .dt_5       (six_dt5),
+        .dt_6       (thirtysix_dt6),
+        .a_out      (a_w),
+        .valid_out  (v_a)
+    );
+
+    CEU_a #(.DBL_WIDTH(64)) u_CEU_b (
+        .clk        (clk),
+        .rst_n      (rst_ceu1_n),
+        // .Theta_1_1  (P_k1k1[1][1]),
+        .Theta_4_1  (P_k1k1[4][1]),
+        .Theta_7_1  (P_k1k1[7][1]),
+        .Theta_4_4  (P_k1k1[4][4]),
+        .Theta_10_1 (P_k1k1[10][1]),
+        .Theta_7_4  (P_k1k1[7][4]),
+        .Theta_10_4 (P_k1k1[10][4]),
+        .Theta_7_7  (P_k1k1[7][7]),
+        .Theta_10_7 (P_k1k1[10][7]),
+        .Theta_10_10(P_k1k1[10][10]),
+        .Q_1_1      (Q_k[1][1]),
+        .R_1_1      (R_k[1][1]),
+        .dt_1       (delta_t2),
+        .dt_2       (dt2),
+        .dt_3       (three_dt3),
+        .dt_4       (twive_dt4),
+        .dt_5       (six_dt5),
+        .dt_6       (thirtysix_dt6),
+        .a_out      (b_w),
+        .valid_out  (v_b)
+    );
+
+    CEU_a #(.DBL_WIDTH(64)) u_CEU_c (
+        .clk        (clk),
+        .rst_n      (rst_ceu1_n),
+        // .Theta_1_1  (P_k1k1[2][2]),
+        .Theta_4_1  (P_k1k1[5][2]),
+        .Theta_7_1  (P_k1k1[8][2]),
+        .Theta_4_4  (P_k1k1[5][5]),
+        .Theta_10_1 (P_k1k1[11][2]),
+        .Theta_7_4  (P_k1k1[8][5]),
+        .Theta_10_4 (P_k1k1[11][5]),
+        .Theta_7_7  (P_k1k1[8][8]),
+        .Theta_10_7 (P_k1k1[11][8]),
+        .Theta_10_10(P_k1k1[11][11]),
+        .Q_1_1      (Q_k[2][2]),
+        .R_1_1      (R_k[2][2]),
+        .dt_1       (delta_t2),
+        .dt_2       (dt2),
+        .dt_3       (three_dt3),
+        .dt_4       (twive_dt4),
+        .dt_5       (six_dt5),
+        .dt_6       (thirtysix_dt6),
+        .a_out      (c_w),
+        .valid_out  (v_c)
+    );
+
+    CEU_d #(.DBL_WIDTH(64)) u_CEU_d (
+        .clk         (clk),
+        .rst_n       (rst_ceu1_n),
+        //.valid_in    (ceu1_start),
+        .Theta_10_7  (P_k1k1[9][6]),
+        .Theta_7_4   (P_k1k1[6][3]),
+        .Theta_10_4  (P_k1k1[9][3]),
+        .Theta_4_7   (P_k1k1[3][6]),
+        .Theta_10_10 (P_k1k1[9][9]),
+        .Theta_4_4   (P_k1k1[3][3]),
+        .Q_4_4       (Q_k[3][3]),
+        .R_4_4       (R_k[3][3]),
+        .delta_t2    (delta_t2),
+        .delta_t_sq  (dt2),
+        .delta_t_hcu (half_dt3),
+        .delta_t_qr  (quarter_dt4),
+        .d           (d_w),
+        .valid_out   (v_d)
+    );
+
+    CEU_d #(.DBL_WIDTH(64)) u_CEU_e (
+        .clk         (clk),
+        .rst_n       (rst_ceu1_n),
+        //.valid_in    (ceu1_start),
+        .Theta_10_7  (P_k1k1[10][7]),
+        .Theta_7_4   (P_k1k1[7][4]),
+        .Theta_10_4  (P_k1k1[10][4]),
+        .Theta_4_7   (P_k1k1[4][7]),
+        .Theta_10_10 (P_k1k1[10][10]),
+        .Theta_4_4   (P_k1k1[4][4]),
+        .Q_4_4       (Q_k[4][4]),
+        .R_4_4       (R_k[4][4]),
+        .delta_t2    (delta_t2),
+        .delta_t_sq  (dt2),
+        .delta_t_hcu (half_dt3),
+        .delta_t_qr  (quarter_dt4),
+        .d           (e_w),
+        .valid_out   (v_e)
+    );
+
+    CEU_d #(.DBL_WIDTH(64)) u_CEU_f (
+        .clk         (clk),
+        .rst_n       (rst_ceu1_n),
+        //.valid_in    (ceu1_start),
+        .Theta_10_7  (P_k1k1[11][8]),
+        .Theta_7_4   (P_k1k1[8][5]),
+        .Theta_10_4  (P_k1k1[11][5]),
+        .Theta_4_7   (P_k1k1[5][8]),
+        .Theta_10_10 (P_k1k1[11][11]),
+        .Theta_4_4   (P_k1k1[5][5]),
+        .Q_4_4       (Q_k[5][5]),
+        .R_4_4       (R_k[5][5]),
+        .delta_t2    (delta_t2),
+        .delta_t_sq  (dt2),
+        .delta_t_hcu (half_dt3),
+        .delta_t_qr  (quarter_dt4),
+        .d           (f_w),
+        .valid_out   (v_f)
+    );
+
+    CEU_x #(.DBL_WIDTH(64)) u_CEU_x (
+        .clk        (clk),
+        .rst_n      (rst_ceu1_n),
+        .Theta_1_7  (P_k1k1[0][6]),
+        .Theta_4_4  (P_k1k1[3][3]),
+        .Theta_7_4  (P_k1k1[6][3]),
+        .Theta_10_4 (P_k1k1[9][3]),
+        .Theta_7_7  (P_k1k1[6][6]),
+        .Theta_10_1 (P_k1k1[9][0]),
+        .Theta_10_7 (P_k1k1[9][6]),
+        .Theta_10_10(P_k1k1[9][9]),
+        .Theta_1_4  (P_k1k1[0][3]),
+        .Q_1_4      (Q_k[0][3]),
+        .R_1_4      (R_k[0][3]),
+        .delta_t    (delta_t),
+        .half_dt2   (half_dt2),
+        .sixth_dt3  (sixth_dt3),
+        .five12_dt4 (five12_dt4),
+        .one12_dt5  (twleve_dt5),
+        .x          (x_w),
+        .valid_out  (v_x)
+    );
+
+    CEU_x #(.DBL_WIDTH(64)) u_CEU_y (
+        .clk        (clk),
+        .rst_n      (rst_ceu1_n),
+        .Theta_1_7  (P_k1k1[1][7]),
+        .Theta_4_4  (P_k1k1[4][4]),
+        .Theta_7_4  (P_k1k1[7][4]),
+        .Theta_10_4 (P_k1k1[10][4]),
+        .Theta_7_7  (P_k1k1[7][7]),
+        .Theta_10_1 (P_k1k1[10][1]),
+        .Theta_10_7 (P_k1k1[10][7]),
+        .Theta_10_10(P_k1k1[10][10]),
+        .Theta_1_4  (P_k1k1[1][4]),
+        .Q_1_4      (Q_k[1][4]),
+        .R_1_4      (R_k[1][4]),
+        .delta_t    (delta_t),
+        .half_dt2   (half_dt2),
+        .sixth_dt3  (sixth_dt3),
+        .five12_dt4 (five12_dt4),
+        .one12_dt5  (twleve_dt5),
+        .x          (y_w),
+        .valid_out  (v_y)
+    );
+
+    CEU_x #(.DBL_WIDTH(64)) u_CEU_z (
+        .clk        (clk),
+        .rst_n      (rst_ceu1_n),
+        .Theta_1_7  (P_k1k1[2][8]),
+        .Theta_4_4  (P_k1k1[5][5]),
+        .Theta_7_4  (P_k1k1[8][5]),
+        .Theta_10_4 (P_k1k1[11][5]),
+        .Theta_7_7  (P_k1k1[8][8]),
+        .Theta_10_1 (P_k1k1[11][2]),
+        .Theta_10_7 (P_k1k1[11][8]),
+        .Theta_10_10(P_k1k1[11][11]),
+        .Theta_1_4  (P_k1k1[2][5]),
+        .Q_1_4      (Q_k[2][5]),
+        .R_1_4      (R_k[2][5]),
+        .delta_t    (delta_t),
+        .half_dt2   (half_dt2),
+        .sixth_dt3  (sixth_dt3),
+        .five12_dt4 (five12_dt4),
+        .one12_dt5  (twleve_dt5),
+        .x          (z_w),
+        .valid_out  (v_z)
+    );
+
+    // ------------------------------------------------------------
+    // 2) alpha stage
+    // ------------------------------------------------------------
+    logic [DWIDTH-1:0] alpha1_w, alpha2_w, alpha3_w;
+    logic v_alpha1, v_alpha2, v_alpha3;
+    logic [DWIDTH-1:0] alpha1, alpha2, alpha3;
+    logic got_alpha1, got_alpha2, got_alpha3;
+    wire alpha_done = got_alpha1 & got_alpha2 & got_alpha3;
+
+    CEU_alpha u_alpha1 (.clk(clk), .rst_n(rst_alpha_n), .in1(a), .in2(d), .in3(x), .out(alpha1_w), .valid_out(v_alpha1));
+    CEU_alpha u_alpha2 (.clk(clk), .rst_n(rst_alpha_n), .in1(b), .in2(e), .in3(y), .out(alpha2_w), .valid_out(v_alpha2));
+    CEU_alpha u_alpha3 (.clk(clk), .rst_n(rst_alpha_n), .in1(c), .in2(f), .in3(z), .out(alpha3_w), .valid_out(v_alpha3));
+
+    // ------------------------------------------------------------
+    // 3) division (9x) + neg (3x)
+    // ------------------------------------------------------------
+    typedef enum logic [1:0] {DIV_IDLE, DIV_BUSY} div_state_e;
+    div_state_e div_state;
+    logic [3:0] div_idx;
+    logic div_go, div_finish;
+    logic [DWIDTH-1:0] div_num, div_den, div_q;
+
+    CEU_division u_div (
+        .clk        (clk),
+        //.rst_n      (rst_n),
+        .valid      (div_go),
+        .finish     (div_finish),
+        .numerator  (div_num),
+        .denominator(div_den),
+        .quotient   (div_q)
+    );
+
+    logic [DWIDTH-1:0] inv_a1, inv_d1, inv_x1;
+    logic [DWIDTH-1:0] inv_b2, inv_e2, inv_y2;
+    logic [DWIDTH-1:0] inv_c3, inv_f3, inv_z3;
+
+    logic div_all_done;
+
+    // negation by fp_suber
+    logic neg_go;
+    logic negx_finish, negy_finish, negz_finish;
+    logic [DWIDTH-1:0] n_inv_x1, n_inv_y2, n_inv_z3;
+
+    fp_suber u_negx (.clk(clk), 
+    // .rst_n(rst_n), 
+    .valid(neg_go), .finish(negx_finish), .a(64'h0), .b(inv_x1), .result(n_inv_x1));
+    fp_suber u_negy (.clk(clk), 
+    // .rst_n(rst_n), 
+    .valid(neg_go), .finish(negy_finish), .a(64'h0), .b(inv_y2), .result(n_inv_y2));
+    fp_suber u_negz (.clk(clk), 
+    // rst_n(rst_n), 
+    .valid(neg_go), 
+    .finish(negz_finish), .a(64'h0), .b(inv_z3), .result(n_inv_z3));
+
+    logic got_negx, got_negy, got_negz;
+    wire  neg_done = got_negx & got_negy & got_negz;
+
+    // ------------------------------------------------------------
+    // 4) main FSM + latching
+    // ------------------------------------------------------------
+    integer i,j;
+
+    always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            // 复位时全部清零
-            for (int i = 0; i < 6; i++) begin
-                for (int j = 0; j < 6; j++) begin
-                    result_reg[i][j] <= '0;
+            st       <= S_IDLE;
+            ceu1_en  <= 1'b0;
+            alpha_en <= 1'b0;
+
+            // clear flags
+            {got_a,got_b,got_c,got_d,got_e,got_f,got_x,got_y,got_z} <= '0;
+            {got_alpha1,got_alpha2,got_alpha3} <= '0;
+
+            div_state <= DIV_IDLE;
+            div_idx   <= '0;
+            div_go    <= 1'b0;
+            div_all_done <= 1'b0;
+
+            neg_go    <= 1'b0;
+            {got_negx,got_negy,got_negz} <= '0;
+
+            finish <= 1'b0;
+
+            // init outputs
+            for (i=0;i<6;i++) begin
+                for (j=0;j<6;j++) begin
+                    inv_matrix[i][j] <= '0;
                 end
             end
         end else begin
-            // Row 0
-            result_reg[0][0] <= inv_alpha12;               // d / (a*d - x^2)
-            result_reg[0][1] <= 64'h0;                           // 矩阵第0行第1列为 0
-            result_reg[0][2] <= 64'h0;                           // 第0行第2列为 0
-            result_reg[0][3] <= _inv_alpha13 ;               // -x/(a*d - x^2)
-            result_reg[0][4] <= 64'h0;
-            result_reg[0][5] <= 64'h0;
+            finish <= 1'b0;
+            div_go <= 1'b0;
+            neg_go <= 1'b0;
+            div_all_done <= 1'b0;
 
-            // Row 1
-            result_reg[1][0] <= 64'h0;
-            result_reg[1][1] <= inv_alpha22;                // e / (b*e - y^2)
-            result_reg[1][2] <= 64'h0;
-            result_reg[1][3] <= 64'h0;
-            result_reg[1][4] <= _inv_alpha23;                // -y/(b*e - y^2)
-            result_reg[1][5] <= 64'h0;
+            // start
+            if (do_start) begin
+                st       <= S_WAIT_STAGE1;
+                ceu1_en  <= 1'b1;
+                alpha_en <= 1'b0;
 
-            // Row 2
-            result_reg[2][0] <= 64'h0;
-            result_reg[2][1] <= 64'h0;
-            result_reg[2][2] <= inv_alpha32;               // f / (c*f - z^2)
-            result_reg[2][3] <= 64'h0;
-            result_reg[2][4] <= 64'h0;
-            result_reg[2][5] <= _inv_alpha33;               // -z/(c*f - z^2)
+                {got_a,got_b,got_c,got_d,got_e,got_f,got_x,got_y,got_z} <= '0;
+                {got_alpha1,got_alpha2,got_alpha3} <= '0;
 
-            // Row 3
-            result_reg[3][0] <= _inv_alpha13;               // -x/(a*d - x^2)
-            result_reg[3][1] <= 64'h0;
-            result_reg[3][2] <= 64'h0;
-            result_reg[3][3] <= inv_alpha11;               // a/(a*d - x^2)
-            result_reg[3][4] <= 64'h0;
-            result_reg[3][5] <= 64'h0;
+                div_state <= DIV_IDLE;
+                div_idx   <= '0;
 
-            // Row 4
-            result_reg[4][0] <= 64'h0;
-            result_reg[4][1] <= _inv_alpha23;                // -y/(b*e - y^2)
-            result_reg[4][2] <= 64'h0;
-            result_reg[4][3] <= 64'h0;
-            result_reg[4][4] <= inv_alpha21;                // b/(b*e - y^2)
-            result_reg[4][5] <= 64'h0;
+                {got_negx,got_negy,got_negz} <= '0;
+            end
 
-            // Row 5
-            result_reg[5][0] <= 64'h0;
-            result_reg[5][1] <= 64'h0;
-            result_reg[5][2] <= _inv_alpha33;               // -z/(c*f - z^2)
-            result_reg[5][3] <= 64'h0;
-            result_reg[5][4] <= 64'h0;
-            result_reg[5][5] <= inv_alpha31;               // c/(c*f - z^2)
+            // -------- latch stage1 outputs
+            if (st == S_WAIT_STAGE1) begin
+                if (!got_a && v_a) begin a <= a_w; got_a <= 1'b1; end
+                if (!got_b && v_b) begin b <= b_w; got_b <= 1'b1; end
+                if (!got_c && v_c) begin c <= c_w; got_c <= 1'b1; end
+                if (!got_d && v_d) begin d <= d_w; got_d <= 1'b1; end
+                if (!got_e && v_e) begin e <= e_w; got_e <= 1'b1; end
+                if (!got_f && v_f) begin f <= f_w; got_f <= 1'b1; end
+                if (!got_x && v_x) begin x <= x_w; got_x <= 1'b1; end
+                if (!got_y && v_y) begin y <= y_w; got_y <= 1'b1; end
+                if (!got_z && v_z) begin z <= z_w; got_z <= 1'b1; end
+
+                if (stage1_done) begin
+                    alpha_en <= 1'b1;   // release alpha pipeline
+                    st       <= S_WAIT_ALPHA;
+                end
+            end
+
+            // -------- latch alpha
+            if (st == S_WAIT_ALPHA) begin
+                if (!got_alpha1 && v_alpha1) begin alpha1 <= alpha1_w; got_alpha1 <= 1'b1; end
+                if (!got_alpha2 && v_alpha2) begin alpha2 <= alpha2_w; got_alpha2 <= 1'b1; end
+                if (!got_alpha3 && v_alpha3) begin alpha3 <= alpha3_w; got_alpha3 <= 1'b1; end
+
+                if (alpha_done) begin
+                    st <= S_DIV;
+                end
+            end
+
+            // -------- division 9x
+            if (st == S_DIV) begin
+                case (div_state)
+                    DIV_IDLE: begin
+                        div_idx <= 4'd0;
+                        // start first division
+                        div_num <= a;      div_den <= alpha1;
+                        div_go  <= 1'b1;
+                        div_state <= DIV_BUSY;
+                    end
+
+                    DIV_BUSY: begin
+                        if (div_finish) begin
+                            // store
+                            unique case (div_idx)
+                                4'd0: inv_a1 <= div_q;
+                                4'd1: inv_d1 <= div_q;
+                                4'd2: inv_x1 <= div_q;
+                                4'd3: inv_b2 <= div_q;
+                                4'd4: inv_e2 <= div_q;
+                                4'd5: inv_y2 <= div_q;
+                                4'd6: inv_c3 <= div_q;
+                                4'd7: inv_f3 <= div_q;
+                                4'd8: inv_z3 <= div_q;
+                                default: ;
+                            endcase
+
+                            if (div_idx == 4'd8) begin
+                                div_state <= DIV_IDLE;
+                                div_all_done <= 1'b1;
+                                st <= S_WAIT_NEG;
+                                // kick negation (3 subers)
+                                neg_go <= 1'b1;
+                            end else begin
+                                div_idx <= div_idx + 1'b1;
+                                unique case (div_idx + 1'b1)
+                                    4'd1: begin div_num <= d; div_den <= alpha1; end
+                                    4'd2: begin div_num <= x; div_den <= alpha1; end
+                                    4'd3: begin div_num <= b; div_den <= alpha2; end
+                                    4'd4: begin div_num <= e; div_den <= alpha2; end
+                                    4'd5: begin div_num <= y; div_den <= alpha2; end
+                                    4'd6: begin div_num <= c; div_den <= alpha3; end
+                                    4'd7: begin div_num <= f; div_den <= alpha3; end
+                                    4'd8: begin div_num <= z; div_den <= alpha3; end
+                                    default: begin div_num <= '0; div_den <= '0; end
+                                endcase
+                                div_go <= 1'b1;
+                            end
+                        end
+                    end
+                endcase
+            end
+
+            // -------- wait negation completes (3 independent finishes)
+            if (st == S_WAIT_NEG) begin
+                if (!got_negx && negx_finish) got_negx <= 1'b1;
+                if (!got_negy && negy_finish) got_negy <= 1'b1;
+                if (!got_negz && negz_finish) got_negz <= 1'b1;
+
+                if (neg_done) begin
+                    st <= S_WRITE;
+                end
+            end
+
+            // -------- write output matrix (1-cycle)
+            if (st == S_WRITE) begin
+                // clear
+                for (i=0;i<6;i++) begin
+                    for (j=0;j<6;j++) begin
+                        inv_matrix[i][j] <= '0;
+                    end
+                end
+
+                // block1: rows/cols (0,3)
+                inv_matrix[0][0] <= inv_d1;
+                inv_matrix[0][3] <= n_inv_x1;
+                inv_matrix[3][0] <= n_inv_x1;
+                inv_matrix[3][3] <= inv_a1;
+
+                // block2: rows/cols (1,4)
+                inv_matrix[1][1] <= inv_e2;
+                inv_matrix[1][4] <= n_inv_y2;
+                inv_matrix[4][1] <= n_inv_y2;
+                inv_matrix[4][4] <= inv_b2;
+
+                // block3: rows/cols (2,5)
+                inv_matrix[2][2] <= inv_f3;
+                inv_matrix[2][5] <= n_inv_z3;
+                inv_matrix[5][2] <= n_inv_z3;
+                inv_matrix[5][5] <= inv_c3;
+
+                finish <= 1'b1; // 1-cycle pulse
+                st <= S_DONE;
+            end
+
+            if (st == S_DONE) begin
+                // idle until next do_start
+                st <= S_IDLE;
+                ceu1_en  <= 1'b0;
+                alpha_en <= 1'b0;
+            end
         end
     end
 
-
-assign inv_matrix = result_reg;        
-assign finish = fpsub13_finish & fpsub23_finish & fpsub33_finish; 
-
 endmodule
+
+`default_nettype wire
+

@@ -44,5 +44,5 @@ module fp_suber(
     .m_axis_result_tdata  ( result               )
 );
 
-assign finish = m_axis_result_tvalid & s_axis_a_tready & s_axis_b_tready;
+assign finish = m_axis_result_tvalid;  // �?只看结果有效信号
 endmodule

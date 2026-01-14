@@ -25,16 +25,15 @@ module F_make (
     input           rst_n   ,   
     output          finish  ,   
     input  [63:0]   deltat  ,   
-    output reg [63:0] F [0:11][0:11] // 12x12双精度浮点矩阵
+    output reg [63:0] F [0:11][0:11] // 12x12双精度浮点矩�?    
 );
 
-// 浮点运算IP核声明
+// 浮点运算IP核声�?   
     logic [63:0] deltat_sq, deltat_cu, deltat_sq_div2, deltat_cu_div6, deltat_sq_div6;
 
     logic dt2_finish, dt3_finish;
 
-    fp_multiplier u_fp_mult_dt2 (
-        .clk        (   clk         ),
+    fp_multiplier u_fp_mult_dt2 (.clk(clk),
         .a          (   deltat      ),
         .b          (   deltat      ),
         .valid      (   1'b1        ),
@@ -42,8 +41,7 @@ module F_make (
         .result     (   deltat_sq   )
     );
 
-    fp_multiplier u_fp_mult_dt3 (
-        .clk    (   clk         ),
+    fp_multiplier u_fp_mult_dt3 (.clk(clk),
         .valid  (   dt2_finish  ),
         .finish (   dt3_finish  ),
         .a      (   deltat_sq   ),
@@ -59,13 +57,13 @@ module F_make (
     logic   div_dout_tvalid                     ;    
     logic   div_dout_tready     = dt3_finish    ;
 
-    // --- 顶层实例化 Floating-Point Divider IP ---
+    // --- 顶层实例�?Floating-Point Divider IP ---
 
 
-// 正确实例化 floating_point_div 模块
+// 正确实例�?floating_point_div 模块
     floating_point_div u_floating_point_div2 (
         .aclk                   (   clk                    ), 
-        // 被除数输入 (A 通道)  
+        // 被除数输�?(A 通道)  
         .s_axis_a_tvalid        (   div_dividend_tvalid    ), 
         .s_axis_a_tready        (   div_divisor_tready     ), 
         .s_axis_a_tdata         (   deltat_sq              ), 
@@ -88,7 +86,7 @@ module F_make (
     logic   div_dout_tready6     = dt3_finish ;
     floating_point_div u_floating_point_div6 (
         .aclk                   ( clk                   ),   
-        // 被除数输入 (A 通道) 
+        // 被除数输�?(A 通道) 
         .s_axis_a_tvalid        ( div_dividend_tvalid6  ),   
         .s_axis_a_tready        ( div_dividend_tready6  ),   
         .s_axis_a_tdata         ( deltat_cu             ),   
@@ -112,7 +110,7 @@ module F_make (
 
     floating_point_div u_floating_point_divsq6 (
         .aclk                   (   clk                     ),    
-        // 被除数输入 (A 通道)  
+        // 被除数输�?(A 通道)  
         .s_axis_a_tvalid        (   div_dividend_tvalidsq6  ),    
         .s_axis_a_tready        (   div_dividend_treadysq6  ),    
         .s_axis_a_tdata         (   deltat_sq               ),    
@@ -139,12 +137,11 @@ always_comb begin
         end
     end
     
-    // 保持主对角线为1.0
+    // 保持主对角线�?.0
     for (int i = 0; i < 12; i ++) F[i][i] = 64'h3FF0000000000000;
     
     // 动态更新非对角元素
-    // 一阶项（Δt）
-    F[0][3]   = deltat;
+    // 一阶项（Δt�?    F[0][3]   = deltat;
     F[1][4]   = deltat;
     F[2][5]   = deltat;
     F[3][6]   = deltat;
@@ -154,18 +151,17 @@ always_comb begin
     F[7][10]  = deltat;
     F[8][11]  = deltat;
     
-    // 二阶项（1/2Δt²）
-    F[0][6]   = deltat_sq_div2;
+    // 二阶项（1/2Δt²�?    F[0][6]   = deltat_sq_div2;
     F[1][7]   = deltat_sq_div2;
     F[2][8]   = deltat_sq_div2;
     F[3][9]   = deltat_sq_div2;
     F[4][10]  = deltat_sq_div2;
     F[5][11]  = deltat_sq_div2;
 
-    // 三阶项（1/6Δt³）
-    F[0][9]   = deltat_cu_div6;
+    // 三阶项（1/6Δt³�?    F[0][9]   = deltat_cu_div6;
     F[1][10]  = deltat_cu_div6;
     F[2][11]  = deltat_cu_div6;
 end
 
 endmodule
+

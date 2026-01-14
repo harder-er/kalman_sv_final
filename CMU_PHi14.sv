@@ -30,10 +30,10 @@ module CMU_PHi14 #(
 
     fp_multiplier u_mul0 (.clk(clk), .valid(mul_go[0]), .finish(mul_finish[0]), .a(mul_a[0]), .b(mul_b[0]), .result(mul_r[0]));
     fp_multiplier u_mul1 (.clk(clk), .valid(mul_go[1]), .finish(mul_finish[1]), .a(mul_a[1]), .b(mul_b[1]), .result(mul_r[1]));
-    fp_adder      u_add0 (.clk(clk), .valid(add_go[0]), .finish(add_finish[0]), .a(add_a[0]), .b(add_b[0]), .result(add_r[0]));
-    fp_adder      u_add1 (.clk(clk), .valid(add_go[1]), .finish(add_finish[1]), .a(add_a[1]), .b(add_b[1]), .result(add_r[1]));
+    fp_adder u_add0 (.clk(clk), .valid(add_go[0]), .finish(add_finish[0]), .a(add_a[0]), .b(add_b[0]), .result(add_r[0]));
+    fp_adder u_add1 (.clk(clk), .valid(add_go[1]), .finish(add_finish[1]), .a(add_a[1]), .b(add_b[1]), .result(add_r[1]));
 
-    // 中间寄存器
+    // 中间寄存�?    
     logic [DBL_WIDTH-1:0] a1;
     logic [DBL_WIDTH-1:0] x1, x2, x3;
     logic [DBL_WIDTH-1:0] t1, t2;
@@ -127,3 +127,4 @@ module CMU_PHi14 #(
     end
 
 endmodule
+

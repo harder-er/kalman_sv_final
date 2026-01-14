@@ -46,16 +46,19 @@ module TimeParamsSeq #(
 );
 
     // Constants (IEEE 754 double)
-    localparam logic [DWIDTH-1:0] C_2_0    = 64'h4000000000000000; // 2.0
-    localparam logic [DWIDTH-1:0] C_0_5    = 64'h3fe0000000000000; // 0.5
-    localparam logic [DWIDTH-1:0] C_1_5    = 64'h3ff8000000000000; // 1.5
-    localparam logic [DWIDTH-1:0] C_0_333  = 64'h3fd5555555555555; // 1/3
-    localparam logic [DWIDTH-1:0] C_0_166  = 64'h3fc5555555555555; // 1/6
-    localparam logic [DWIDTH-1:0] C_0_666  = 64'h3fe5555555555555; // 2/3
-    localparam logic [DWIDTH-1:0] C_0_25   = 64'h3fd0000000000000; // 1/4
-    localparam logic [DWIDTH-1:0] C_0_0833 = 64'h3fb5555555555555; // 1/12
-    localparam logic [DWIDTH-1:0] C_0_416  = 64'h3fdb6db6db6db6db; // 5/12
-    localparam logic [DWIDTH-1:0] C_0_0277 = 64'h3f72222222222222; // 1/36
+    localparam logic [DWIDTH-1:0] C_2_0    = 64'h4000_0000_0000_0000; // 2.0
+    localparam logic [DWIDTH-1:0] C_0_5    = 64'h3fe0_0000_0000_0000; // 0.5
+    localparam logic [DWIDTH-1:0] C_1_5    = 64'h3ff8_0000_0000_0000; // 1.5
+    localparam logic [DWIDTH-1:0] C_0_333  = 64'h3fd5_5555_5555_5555; // 1/3
+    localparam logic [DWIDTH-1:0] C_0_166  = 64'h3fc5_5555_5555_5555; // 1/6
+    localparam logic [DWIDTH-1:0] C_0_666  = 64'h3fe5_5555_5555_5555; // 2/3
+    localparam logic [DWIDTH-1:0] C_0_25   = 64'h3fd0_0000_0000_0000; // 1/4
+    localparam logic [DWIDTH-1:0] C_0_0833 = 64'h3fb5_5555_5555_5555; // 1/12
+    localparam logic [DWIDTH-1:0] C_0_416  = 64'h3fdb_6db6_db6d_b6db; // 5/12
+    localparam logic [DWIDTH-1:0] C_0_0277 = 64'h3f72_2222_2222_2222; // 1/36
+
+    // latch delta_t to keep stable across the sequence
+    logic [DWIDTH-1:0] dt_reg;
 
     // internal powers
     logic [DWIDTH-1:0] dt_sq, dt_cu, dt_qu, dt_qi, dt_sx;
@@ -95,24 +98,28 @@ module TimeParamsSeq #(
 
     state_t st;
 
-    // drive request/response handshake
+    // -----------------------
+    // combinational handshake
+    // -----------------------
     always_comb begin
         mul_req_valid  = 1'b0;
         mul_req_a      = '0;
         mul_req_b      = '0;
+
+        // only assert ready when we are expecting a response (WAIT states)
         mul_resp_ready = 1'b0;
 
         unique case (st)
             // request states
             ST_REQ_DT_SQ: begin
                 mul_req_valid = 1'b1;
-                mul_req_a     = delta_t;
-                mul_req_b     = delta_t;
+                mul_req_a     = dt_reg;
+                mul_req_b     = dt_reg;
             end
             ST_REQ_2DT: begin
                 mul_req_valid = 1'b1;
                 mul_req_a     = C_2_0;
-                mul_req_b     = delta_t;
+                mul_req_b     = dt_reg;
             end
             ST_REQ_HALF_DT2: begin
                 mul_req_valid = 1'b1;
@@ -127,7 +134,7 @@ module TimeParamsSeq #(
             ST_REQ_DT_CU: begin
                 mul_req_valid = 1'b1;
                 mul_req_a     = dt_sq;
-                mul_req_b     = delta_t;
+                mul_req_b     = dt_reg;
             end
             ST_REQ_HALF_DT3: begin
                 mul_req_valid = 1'b1;
@@ -152,7 +159,7 @@ module TimeParamsSeq #(
             ST_REQ_DT_QU: begin
                 mul_req_valid = 1'b1;
                 mul_req_a     = dt_cu;
-                mul_req_b     = delta_t;
+                mul_req_b     = dt_reg;
             end
             ST_REQ_QUARTER_DT4: begin
                 mul_req_valid = 1'b1;
@@ -177,7 +184,7 @@ module TimeParamsSeq #(
             ST_REQ_DT_QI: begin
                 mul_req_valid = 1'b1;
                 mul_req_a     = dt_qu;
-                mul_req_b     = delta_t;
+                mul_req_b     = dt_reg;
             end
             ST_REQ_SIX_DT5: begin
                 mul_req_valid = 1'b1;
@@ -192,7 +199,7 @@ module TimeParamsSeq #(
             ST_REQ_DT_SX: begin
                 mul_req_valid = 1'b1;
                 mul_req_a     = dt_qi;
-                mul_req_b     = delta_t;
+                mul_req_b     = dt_reg;
             end
             ST_REQ_THIRTYSIX_DT6: begin
                 mul_req_valid = 1'b1;
@@ -200,19 +207,23 @@ module TimeParamsSeq #(
                 mul_req_b     = C_0_0277;
             end
 
-            // wait states: always ready to take response
+            // wait states
             default: begin
                 mul_resp_ready = 1'b1;
             end
         endcase
     end
 
+    // -----------------------
     // state + registers
+    // -----------------------
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st            <= ST_IDLE;
             done          <= 1'b0;
             valid         <= 1'b0;
+
+            dt_reg        <= '0;
 
             dt_sq         <= '0;
             dt_cu         <= '0;
@@ -224,27 +235,31 @@ module TimeParamsSeq #(
             dt2           <= '0;
             half_dt2      <= '0;
             three2_dt2    <= '0;
+
             half_dt3      <= '0;
             three_dt3     <= '0;
             sixth_dt3     <= '0;
             two3_dt3      <= '0;
+
             quarter_dt4   <= '0;
             sixth_dt4     <= '0;
             twive_dt4     <= '0;
             five12_dt4    <= '0;
+
             six_dt5       <= '0;
             twleve_dt5    <= '0;
+
             thirtysix_dt6 <= '0;
         end else begin
             done <= 1'b0;
 
-            // restart anytime
+            // start sequence
             if (start) begin
-                st    <= ST_REQ_DT_SQ;
-                valid <= 1'b0;
+                dt_reg <= delta_t;     // latch input
+                st     <= ST_REQ_DT_SQ;
+                valid  <= 1'b0;
             end else begin
                 unique case (st)
-
                     ST_IDLE: begin
                         // wait start
                     end
@@ -252,8 +267,10 @@ module TimeParamsSeq #(
                     // ---------- request -> wait ----------
                     ST_REQ_DT_SQ:      if (mul_req_valid && mul_req_ready) st <= ST_WAIT_DT_SQ;
                     ST_REQ_2DT:        if (mul_req_valid && mul_req_ready) st <= ST_WAIT_2DT;
+
                     ST_REQ_HALF_DT2:   if (mul_req_valid && mul_req_ready) st <= ST_WAIT_HALF_DT2;
                     ST_REQ_THREE2_DT2: if (mul_req_valid && mul_req_ready) st <= ST_WAIT_THREE2_DT2;
+
                     ST_REQ_DT_CU:      if (mul_req_valid && mul_req_ready) st <= ST_WAIT_DT_CU;
 
                     ST_REQ_HALF_DT3:   if (mul_req_valid && mul_req_ready) st <= ST_WAIT_HALF_DT3;
@@ -269,124 +286,144 @@ module TimeParamsSeq #(
                     ST_REQ_FIVE12_DT4:  if (mul_req_valid && mul_req_ready) st <= ST_WAIT_FIVE12_DT4;
 
                     ST_REQ_DT_QI:      if (mul_req_valid && mul_req_ready) st <= ST_WAIT_DT_QI;
+
                     ST_REQ_SIX_DT5:    if (mul_req_valid && mul_req_ready) st <= ST_WAIT_SIX_DT5;
                     ST_REQ_TWLEVE_DT5: if (mul_req_valid && mul_req_ready) st <= ST_WAIT_TWLEVE_DT5;
 
                     ST_REQ_DT_SX:      if (mul_req_valid && mul_req_ready) st <= ST_WAIT_DT_SX;
+
                     ST_REQ_THIRTYSIX_DT6: if (mul_req_valid && mul_req_ready) st <= ST_WAIT_THIRTYSIX_DT6;
 
                     // ---------- wait -> latch result -> next ----------
                     ST_WAIT_DT_SQ: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             dt_sq <= mul_resp_y;
                             dt2   <= mul_resp_y;
                             st    <= ST_REQ_2DT;
                         end
                     end
+
                     ST_WAIT_2DT: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             delta_t2 <= mul_resp_y;
                             st       <= ST_REQ_HALF_DT2;
                         end
                     end
+
                     ST_WAIT_HALF_DT2: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             half_dt2 <= mul_resp_y;
                             st       <= ST_REQ_THREE2_DT2;
                         end
                     end
+
                     ST_WAIT_THREE2_DT2: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             three2_dt2 <= mul_resp_y;
                             st         <= ST_REQ_DT_CU;
                         end
                     end
+
                     ST_WAIT_DT_CU: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             dt_cu <= mul_resp_y;
                             st    <= ST_REQ_HALF_DT3;
                         end
                     end
+
                     ST_WAIT_HALF_DT3: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             half_dt3 <= mul_resp_y;
                             st       <= ST_REQ_THREE_DT3;
                         end
                     end
+
                     ST_WAIT_THREE_DT3: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             three_dt3 <= mul_resp_y;
                             st        <= ST_REQ_SIXTH_DT3;
                         end
                     end
+
                     ST_WAIT_SIXTH_DT3: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             sixth_dt3 <= mul_resp_y;
                             st        <= ST_REQ_TWO3_DT3;
                         end
                     end
+
                     ST_WAIT_TWO3_DT3: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             two3_dt3 <= mul_resp_y;
                             st       <= ST_REQ_DT_QU;
                         end
                     end
+
                     ST_WAIT_DT_QU: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             dt_qu <= mul_resp_y;
                             st    <= ST_REQ_QUARTER_DT4;
                         end
                     end
+
                     ST_WAIT_QUARTER_DT4: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             quarter_dt4 <= mul_resp_y;
                             st          <= ST_REQ_SIXTH_DT4;
                         end
                     end
+
                     ST_WAIT_SIXTH_DT4: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             sixth_dt4 <= mul_resp_y;
                             st        <= ST_REQ_TWIVE_DT4;
                         end
                     end
+
                     ST_WAIT_TWIVE_DT4: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             twive_dt4 <= mul_resp_y;
                             st        <= ST_REQ_FIVE12_DT4;
                         end
                     end
+
                     ST_WAIT_FIVE12_DT4: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             five12_dt4 <= mul_resp_y;
                             st         <= ST_REQ_DT_QI;
                         end
                     end
+
                     ST_WAIT_DT_QI: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             dt_qi <= mul_resp_y;
                             st    <= ST_REQ_SIX_DT5;
                         end
                     end
+
                     ST_WAIT_SIX_DT5: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             six_dt5 <= mul_resp_y;
                             st      <= ST_REQ_TWLEVE_DT5;
                         end
                     end
+
                     ST_WAIT_TWLEVE_DT5: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             twleve_dt5 <= mul_resp_y;
                             st         <= ST_REQ_DT_SX;
                         end
                     end
+
                     ST_WAIT_DT_SX: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             dt_sx <= mul_resp_y;
                             st    <= ST_REQ_THIRTYSIX_DT6;
                         end
                     end
+
                     ST_WAIT_THIRTYSIX_DT6: begin
-                        if (mul_resp_valid) begin
+                        if (mul_resp_valid && mul_resp_ready) begin
                             thirtysix_dt6 <= mul_resp_y;
                             valid         <= 1'b1;
                             done          <= 1'b1;

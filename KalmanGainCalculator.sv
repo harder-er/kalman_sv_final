@@ -96,8 +96,8 @@ module FpMulArb #(
     end
 
     // multiplier instance (exactly ONE here; you can replicate this module for more)
-    fp_multiplier u_mul (
-        .clk    (clk),
+    fp_multiplier u_mul (.clk(clk),
+        // .rst_n  (rst_n),
         .valid  (mul_valid_pulse),
         .finish (mul_finish),
         .a      (a_reg),
@@ -159,7 +159,7 @@ module KalmanGainCalculator #(
     input  logic                  rst_n,
     input  logic [DWIDTH-1:0]     delta_t,      // 时间间隔
 
-    input  logic                  SP_Done,      // 状态预测完成
+    input  logic                  SP_Done,      // 状态预测完�?    
     output logic                  CKG_Done,     // 测量更新完成
 
     input  logic [DWIDTH-1:0]     P_k1k1 [0:12-1][0:12-1],
@@ -172,9 +172,9 @@ module KalmanGainCalculator #(
     localparam int N = 12;
     localparam int M = 6;
 
-    // 预测协方差矩阵
+    // 预测协方差矩�?    
     logic [DWIDTH-1:0] P_predicted    [0:N-1][0:N-1];
-    // P_predicted * H^T (H 取前6列) => 12x6
+    // P_predicted * H^T (H 取前6�? => 12x6
     logic [DWIDTH-1:0] P_predicted_HT [0:N-1][0:M-1];
 
     always_comb begin
@@ -294,30 +294,46 @@ module KalmanGainCalculator #(
     wire rst_cmu = rst_n & tp_valid;
 
     // =========================================================
-    // 2) Matrix inverse（保持你原逻辑）
-    // =========================================================
+    // 2) Matrix inverse（保持你原逻辑�?    // =========================================================
     logic [DWIDTH-1:0] inv_matrix [0:5][0:5];
     logic              inv_complete;
 
     MatrixInverseUnit #(.DWIDTH(DWIDTH)) u_MatrixInverseUnit (
-        .clk        (clk),
-        .rst_n      (rst_n),
-        .P_k1k1     (P_k1k1),
-        .R_k        (R_k),
-        .Q_k        (Q_k),
-        .valid      (SP_Done),
-        .inv_matrix (inv_matrix),
-        .finish     (inv_complete)
-    );
+        .clk(clk),
+        .rst_n(rst_n),
+
+        .valid   (SP_Done),   // 仍然可以�?SP_Done（内�?pending �?tp_valid�?        
+        .tp_valid(tp_valid),
+
+        .delta_t      (delta_t),
+        .delta_t2     (delta_t2),
+        .dt2          (dt2),
+        .half_dt2     (half_dt2),
+        .half_dt3     (half_dt3),
+        .three_dt3    (three_dt3),
+        .sixth_dt3    (sixth_dt3),
+        .quarter_dt4  (quarter_dt4),
+        .twive_dt4    (twive_dt4),
+        .five12_dt4   (five12_dt4),
+        .six_dt5      (six_dt5),
+        .twleve_dt5   (twleve_dt5),
+        .thirtysix_dt6(thirtysix_dt6),
+
+        .P_k1k1(P_k1k1),
+        .Q_k   (Q_k),
+        .R_k   (R_k),
+
+        .inv_matrix(inv_matrix),
+        .finish    (inv_complete)
+        );
 
     // =========================================================
-    // 3) CMU 时分复用：一套 CMU + idx FSM，替代三套平铺
-    // =========================================================
+    // 3) CMU 时分复用：一�?CMU + idx FSM，替代三套平�?    // =========================================================
     localparam int CMU_ITER = 3;
     logic [1:0] cmu_idx;
     logic       cmu_all_done;
 
-    // 当前 idx 对应的一组输入选择（直接用数组索引 + cmu_idx）
+    // 当前 idx 对应的一组输入选择（直接用数组索引 + cmu_idx�?    
     wire [DWIDTH-1:0] t_1_1      = P_k1k1[0 + cmu_idx][0 + cmu_idx];
     wire [DWIDTH-1:0] t_4_1      = P_k1k1[3 + cmu_idx][0 + cmu_idx];
     wire [DWIDTH-1:0] t_7_1      = P_k1k1[6 + cmu_idx][0 + cmu_idx];
@@ -791,7 +807,7 @@ module KalmanGainCalculator #(
 
     // =========================================================
     // 6) 串行 MAC：K = P_predicted_HT12(12x6) * inv_matrix12(6x6)
-    //     单乘法器 + 单加法器，三重循环 row/col/k 逐项累加
+    //     单乘法器 + 单加法器，三重循�?row/col/k 逐项累加
     // =========================================================
     logic [DWIDTH-1:0] K_k_matrix [0:11][0:11];
     logic              K_done;
@@ -813,8 +829,7 @@ module KalmanGainCalculator #(
     logic [DWIDTH-1:0] mul_result;
     logic [DWIDTH-1:0] add_result;
 
-    fp_multiplier u_kmul (
-        .clk    (clk),
+    fp_multiplier u_kmul (.clk(clk),
         .valid  (mul_go),
         .finish (mul_finish),
         .a      (mul_a),
@@ -822,8 +837,8 @@ module KalmanGainCalculator #(
         .result (mul_result)
     );
 
-    fp_adder u_kadd (
-        .clk    (clk),
+    fp_adder u_kadd (.clk(clk), 
+    // .rst_n(rst_n),
         .valid  (add_go),
         .finish (add_finish),
         .a      (add_a),
@@ -916,7 +931,7 @@ module KalmanGainCalculator #(
                             k_state <= K_IDLE;
                         end else begin
                             row_idx <= row_idx + 1'b1;
-                            // 启动下一行/第 0 列乘法
+                            // 启动下一�?�?0 列乘�?                            
                             mul_a   <= P_predicted_HT12[row_idx + 1'b1][0];
                             mul_b   <= inv_matrix12[0][0];
                             mul_go  <= 1'b1;
@@ -924,7 +939,7 @@ module KalmanGainCalculator #(
                         end
                     end else begin
                         col_idx <= col_idx + 1'b1;
-                        // 启动同一行下一列乘法
+                        // 启动同一行下一列乘�?                        
                         mul_a   <= P_predicted_HT12[row_idx][0];
                         mul_b   <= inv_matrix12[0][col_idx + 1'b1];
                         mul_go  <= 1'b1;
@@ -953,3 +968,4 @@ module KalmanGainCalculator #(
     endgenerate
 
 endmodule
+

@@ -20,7 +20,7 @@ module CMU_PHi11 #(
     input  logic [DBL_WIDTH-1:0]   Theta_7_10,
     input  logic [DBL_WIDTH-1:0]   Theta_10_10,
     input  logic [DBL_WIDTH-1:0]   Q_1_1,
-    // 时间参数（外部已算好）
+    // 时间参数（外部已算好�?    
     input  logic [DBL_WIDTH-1:0]   delta_t1,
     input  logic [DBL_WIDTH-1:0]   delta_t2,
     input  logic [DBL_WIDTH-1:0]   delta_t3,
@@ -33,7 +33,7 @@ module CMU_PHi11 #(
     output logic                   valid_out
 );
 
-    // 2 路乘 + 2 路加的共享单元
+    // 2 路乘 + 2 路加的共享单�?    
     logic mul_go [0:1], mul_finish [0:1];
     logic [DBL_WIDTH-1:0] mul_a [0:1], mul_b [0:1], mul_r [0:1];
     logic add_go [0:1], add_finish [0:1];
@@ -41,10 +41,10 @@ module CMU_PHi11 #(
 
     fp_multiplier u_mul0 (.clk(clk), .valid(mul_go[0]), .finish(mul_finish[0]), .a(mul_a[0]), .b(mul_b[0]), .result(mul_r[0]));
     fp_multiplier u_mul1 (.clk(clk), .valid(mul_go[1]), .finish(mul_finish[1]), .a(mul_a[1]), .b(mul_b[1]), .result(mul_r[1]));
-    fp_adder      u_add0 (.clk(clk), .valid(add_go[0]), .finish(add_finish[0]), .a(add_a[0]), .b(add_b[0]), .result(add_r[0]));
-    fp_adder      u_add1 (.clk(clk), .valid(add_go[1]), .finish(add_finish[1]), .a(add_a[1]), .b(add_b[1]), .result(add_r[1]));
+    fp_adder u_add0 (.clk(clk), .valid(add_go[0]), .finish(add_finish[0]), .a(add_a[0]), .b(add_b[0]), .result(add_r[0]));
+    fp_adder u_add1 (.clk(clk), .valid(add_go[1]), .finish(add_finish[1]), .a(add_a[1]), .b(add_b[1]), .result(add_r[1]));
 
-    // 中间寄存器
+    // 中间寄存�?    
     logic [DBL_WIDTH-1:0] m1, m2, m3;
     logic [DBL_WIDTH-1:0] a1, a2, a3, a4;
     logic [DBL_WIDTH-1:0] x2, x3, x4, x5, x6;
@@ -199,3 +199,4 @@ module CMU_PHi11 #(
     end
 
 endmodule
+

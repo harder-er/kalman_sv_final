@@ -5,11 +5,8 @@
 //
 // Create Date: 2025/05/10
 // Module Name: DelayUnit
-// Description: 参数化矩阵延迟单元，将数据矩阵 data_in 延迟 DELAY_CYCLES 个时钟周期后输出，
-//              在此期间保持不变。
-// 
-// 支持可配置的行数 ROWS、列数 COLS 以及每元素的位宽 DATA_WIDTH。
-// 
+// Description: 参数化矩阵延迟单元，将数据矩�?data_in 延迟 DELAY_CYCLES 个时钟周期后输出�?//              在此期间保持不变�?// 
+// 支持可配置的行数 ROWS、列�?COLS 以及每元素的位宽 DATA_WIDTH�?// 
 //////////////////////////////////////////////////////////////////////////////////
 
 module DelayUnit #(

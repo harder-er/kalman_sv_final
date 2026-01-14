@@ -30,7 +30,7 @@ module fp_adder(
     logic s_axis_b_tready;
     logic m_axis_result_tvalid;
     floating_point_add u_floating_point_add (
-		.aclk                   ( clk           		),   
+		.aclk                   ( clk           		),
 		// A 通道   
 		.s_axis_a_tvalid        ( valid         		),   
 		.s_axis_a_tready        ( s_axis_a_tready      	),   
@@ -45,6 +45,6 @@ module fp_adder(
 		.m_axis_result_tdata    ( result         		)    
 	);
 
-    assign finish = m_axis_result_tvalid & s_axis_a_tready & s_axis_b_tready;
+    assign finish = m_axis_result_tvalid;  // �?只看结果有效信号
 
 endmodule
