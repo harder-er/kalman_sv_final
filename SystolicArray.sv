@@ -16,6 +16,9 @@ module SystolicArray #(
     output logic [DWIDTH-1:0]   c_out  [0:N-1][0:N-1],
     output logic                cal_finish
 );
+    // fp_* ready wires
+    logic u_add_ready;
+
 
 generate
 if (N == 12) begin : GEN_TILED_12x12_T6
@@ -116,11 +119,13 @@ if (N == 12) begin : GEN_TILED_12x12_T6
     wire  [DWIDTH-1:0] add_y;
 
     fp_adder u_add (.clk(clk), 
+        .rst_n(rst_n), 
     // .rst_n(rst_n),
         // .rst_n  ( rst_n ),
         .a      ( add_a_r ),
         .b      ( add_b_r ),
         .valid  ( add_go  ),
+        .ready  (u_add_ready),
         .finish ( add_finish ),
         .result ( add_y )
     );
@@ -186,7 +191,7 @@ if (N == 12) begin : GEN_TILED_12x12_T6
             // default
             add_go <= 1'b0;
 
-            unique case (st)
+            case (st)
             S_IDLE: begin
                 cal_finish <= 1'b0;
                 if (start) begin
@@ -260,7 +265,7 @@ if (N == 12) begin : GEN_TILED_12x12_T6
 
             // 发起一次加法：只打一�?valid，然后等 finish
             S_ACCUM_START: begin
-                if (!add_busy) begin
+                if (!add_busy && u_add_ready) begin
                     int base_i, base_j, gi, gj;
                     base_i = (ti ? T : 0);
                     base_j = (tj ? T : 0);
@@ -317,12 +322,8 @@ if (N == 12) begin : GEN_TILED_12x12_T6
             end
       
             S_DONE: begin
-                if (!load_en) begin
-                    cal_finish <= 1'b0;
-                    st         <= S_IDLE;
-                end else begin
-                    cal_finish <= 1'b1;
-                end
+                cal_finish <= 1'b1;
+                st         <= S_IDLE;
             end
 
             default: st <= S_IDLE;
@@ -351,4 +352,5 @@ end
 endgenerate
 
 endmodule
+
 

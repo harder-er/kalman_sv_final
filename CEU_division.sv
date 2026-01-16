@@ -4,6 +4,7 @@ module CEU_division #(
     parameter int DBL_WIDTH = 64
 )(
     input  logic                   clk,
+    input  logic                   rst_n,
     input  logic                   valid,
     output logic                   finish,
     input  logic [DBL_WIDTH-1:0]   numerator,
@@ -11,96 +12,87 @@ module CEU_division #(
     output logic [DBL_WIDTH-1:0]   quotient
 );
 
-    // ----------------------------
-    // Internal regs (power-up init to avoid X in sim)
-    // ----------------------------
-    typedef enum logic [1:0] {S_IDLE, S_SEND, S_WAIT_OUT} state_t;
-    state_t st = S_IDLE;
+    // ===================================================================
+    // 正确的AXI-Stream握手实现（参考PG060协议）
+    // 关键：
+    // 1. 输入侧保留pending标志，将单拍valid变成持续tvalid
+    // 2. 输出侧用res_tvalid & res_tready确定finish时刻
+    // ===================================================================
 
-    logic [DBL_WIDTH-1:0] num_r = '0;
-    logic [DBL_WIDTH-1:0] den_r = '0;
+    logic req_pending;
+    logic [DBL_WIDTH-1:0] num_r;
+    logic [DBL_WIDTH-1:0] den_r;
 
-    logic a_tvalid_r = 1'b0;
-    logic b_tvalid_r = 1'b0;
-    logic a_accepted = 1'b0;
-    logic b_accepted = 1'b0;
+    logic s_axis_a_tready, s_axis_b_tready;
+    logic m_axis_result_tvalid, m_axis_result_tdata_w;
+    logic [DBL_WIDTH-1:0] m_axis_result_tdata;
 
-    logic a_tready;
-    logic b_tready;
+    // 接收输入的握手信号
+    wire accept_in = req_pending && s_axis_a_tready && s_axis_b_tready;
 
-    logic [DBL_WIDTH-1:0] res_tdata;
-    logic res_tvalid;
-    logic res_tready;
+    // ===================================================================
+    // 输入侧FSM：把单拍valid变成持续tvalid，直到IP接走
+    // ===================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            req_pending <= 1'b0;
+            num_r       <= '0;
+            den_r       <= '0;
+        end else begin
+            // 从上游接收一次请求（允许valid是单拍脉冲）
+            if (valid && ~req_pending) begin
+                req_pending <= 1'b1;
+                num_r       <= numerator;
+                den_r       <= denominator;
+            end
 
-    assign res_tready = 1'b1;
+            // 当IP真正接走了输入（握手成功），清pending
+            if (accept_in) begin
+                req_pending <= 1'b0;
+            end
+        end
+    end
 
-    // ----------------------------
-    // Xilinx/AMD floating point divider IP (AXI-Stream style)
-    // ----------------------------
+    // 驱动IP的tvalid：只要pending=1，就保持tvalid=1，直到tready接走
+    wire s_axis_a_tvalid = req_pending;
+    wire s_axis_b_tvalid = req_pending;
+
+    // ===================================================================
+    // 实例化：Floating-Point Divider（Double）
+    // ===================================================================
     floating_point_div u_floating_point_div (
-        .aclk                 ( clk        ),
+        .aclk                 ( clk                    ),
+        .aresetn              ( rst_n                  ),
 
-        .s_axis_a_tdata       ( num_r      ),
-        .s_axis_a_tvalid      ( a_tvalid_r ),
-        .s_axis_a_tready      ( a_tready   ),
+        .s_axis_a_tvalid      ( s_axis_a_tvalid       ),
+        .s_axis_a_tready      ( s_axis_a_tready       ),
+        .s_axis_a_tdata       ( num_r                  ),
 
-        .s_axis_b_tdata       ( den_r      ),
-        .s_axis_b_tvalid      ( b_tvalid_r ),
-        .s_axis_b_tready      ( b_tready   ),
+        .s_axis_b_tvalid      ( s_axis_b_tvalid       ),
+        .s_axis_b_tready      ( s_axis_b_tready       ),
+        .s_axis_b_tdata       ( den_r                  ),
 
-        .m_axis_result_tdata  ( res_tdata  ),
-        .m_axis_result_tvalid ( res_tvalid ),
-        .m_axis_result_tready ( res_tready )
+        .m_axis_result_tvalid ( m_axis_result_tvalid  ),
+        .m_axis_result_tready ( 1'b1                  ),
+        .m_axis_result_tdata  ( m_axis_result_tdata   )
     );
 
-    // ----------------------------
-    // Handshake FSM
-    // ----------------------------
-    always_ff @(posedge clk) begin
-        finish <= 1'b0;
-
-        unique case (st)
-            S_IDLE: begin
-                a_tvalid_r <= 1'b0;
-                b_tvalid_r <= 1'b0;
-                a_accepted <= 1'b0;
-                b_accepted <= 1'b0;
-
-                if (valid) begin
-                    num_r     <= numerator;
-                    den_r     <= denominator;
-                    a_tvalid_r <= 1'b1;
-                    b_tvalid_r <= 1'b1;
-                    st        <= S_SEND;
-                end
+    // ===================================================================
+    // 输出侧：直接锁存IP的结果，finish在输出被消费时产生
+    // ===================================================================
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            quotient <= '0;
+        end else begin
+            // 当IP输出有效且被我们接走时，锁存结果
+            if (m_axis_result_tvalid && 1'b1) begin  // 1'b1 is m_axis_result_tready
+                quotient <= m_axis_result_tdata;
             end
-
-            S_SEND: begin
-                // Hold TVALID until each channel handshakes
-                if (!a_accepted && a_tvalid_r && a_tready) begin
-                    a_tvalid_r <= 1'b0;
-                    a_accepted <= 1'b1;
-                end
-                if (!b_accepted && b_tvalid_r && b_tready) begin
-                    b_tvalid_r <= 1'b0;
-                    b_accepted <= 1'b1;
-                end
-
-                if (a_accepted && b_accepted) begin
-                    st <= S_WAIT_OUT;
-                end
-            end
-
-            S_WAIT_OUT: begin
-                if (res_tvalid) begin
-                    quotient <= res_tdata;
-                    finish   <= 1'b1;   // 1-cycle pulse
-                    st       <= S_IDLE;
-                end
-            end
-
-            default: st <= S_IDLE;
-        endcase
+        end
     end
+
+    // finish = 输出被消费的那一拍（m_axis_result_tvalid & m_axis_result_tready）
+    // 不要用"输入侧tready"去门控finish（那样是错的）
+    assign finish = m_axis_result_tvalid && 1'b1;  // 1'b1 is m_axis_result_tready
 
 endmodule

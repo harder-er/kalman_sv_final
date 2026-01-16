@@ -27,22 +27,60 @@ module F_make (
     input  [63:0]   deltat  ,   
     output reg [63:0] F [0:11][0:11] // 12x12双精度浮点矩�?    
 );
+    // fp_* ready wires
+    logic u_fp_mult_dt2_ready;
+    logic u_fp_mult_dt3_ready;
+
 
 // 浮点运算IP核声�?   
     logic [63:0] deltat_sq, deltat_cu, deltat_sq_div2, deltat_cu_div6, deltat_sq_div6;
 
     logic dt2_finish, dt3_finish;
 
+    logic dt2_go, dt3_go;
+    logic dt2_pending, dt3_pending;
+
+    // handshake control for dt2/dt3 multiplies
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            dt2_pending <= 1'b1;
+            dt3_pending <= 1'b0;
+            dt2_go <= 1'b0;
+            dt3_go <= 1'b0;
+        end else begin
+            dt2_go <= 1'b0;
+            dt3_go <= 1'b0;
+
+            if (dt2_pending && u_fp_mult_dt2_ready) begin
+                dt2_go <= 1'b1;
+                dt2_pending <= 1'b0;
+            end
+
+            if (dt2_finish) begin
+                dt3_pending <= 1'b1;
+            end
+
+            if (dt3_pending && u_fp_mult_dt3_ready) begin
+                dt3_go <= 1'b1;
+                dt3_pending <= 1'b0;
+            end
+        end
+    end
+
     fp_multiplier u_fp_mult_dt2 (.clk(clk),
+        .rst_n      (rst_n),
         .a          (   deltat      ),
         .b          (   deltat      ),
-        .valid      (   1'b1        ),
+        .valid      (   dt2_go      ),
+        .ready  (u_fp_mult_dt2_ready),
         .finish     (   dt2_finish  ),
         .result     (   deltat_sq   )
     );
 
     fp_multiplier u_fp_mult_dt3 (.clk(clk),
-        .valid  (   dt2_finish  ),
+        .rst_n  (rst_n),
+        .valid  (   dt3_go      ),
+        .ready  (u_fp_mult_dt3_ready),
         .finish (   dt3_finish  ),
         .a      (   deltat_sq   ),
         .b      (   deltat      ),

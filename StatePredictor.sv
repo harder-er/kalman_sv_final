@@ -34,17 +34,31 @@ module StatePredictor #(
     input   logic [VEC_WIDTH-1:0] Z_k    [6-1:0]            ,     // 观测?
     output  logic [VEC_WIDTH-1:0] X_kk   [MAT_DIM-1:0]           // 下一时刻状态估?
     );
+    // fp_* ready wires
+    logic sub_ready [0:5];
+
     logic [VEC_WIDTH-1:0] HX [6-1:0];
     logic [VEC_WIDTH-1:0] Z_HX [6-1:0]; // 上一时刻状态协方差矩阵
     logic finish[6-1:0];
+    logic sub_go;
+    logic sub_pending;
+    logic sub_inflight;
+    logic [5:0] sub_done;
+    logic sub_all_done_d;
+    logic init_valid_d;
+    wire  sub_all_done = &sub_done;
+    wire  sub_ready_all = sub_ready[0] & sub_ready[1] & sub_ready[2] & sub_ready[3] & sub_ready[4] & sub_ready[5];
+    wire  start_pulse = Init_Valid & ~init_valid_d;
     generate
         for (genvar i = 0; i < 6; i++) begin : gen_HX
             assign HX[i] = X_kk1[i];
 
             fp_suber u_fp_suber (.clk(clk), 
+                .rst_n(rst_n), 
             // .rst_n(rst_n),
-                .valid      (   1'b1        ),
-                .finish     (   finish[i]   ),
+                .valid      (   sub_go      ),
+                .ready      (   sub_ready[i] ),
+        .finish     (   finish[i]   ),
                 .a      	(   Z_k[i]      ),
                 .b      	(   HX[i]       ),
                 .result 	(   Z_HX[i]     ) 
@@ -53,6 +67,44 @@ module StatePredictor #(
         end
 
     endgenerate
+
+    // suber handshake control
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            init_valid_d <= 1'b0;
+            sub_pending  <= 1'b0;
+            sub_inflight <= 1'b0;
+            sub_done     <= '0;
+            sub_go       <= 1'b0;
+            sub_all_done_d <= 1'b0;
+        end else begin
+            init_valid_d <= Init_Valid;
+            sub_go <= 1'b0;
+
+            if (start_pulse) begin
+                sub_pending  <= 1'b1;
+                sub_inflight <= 1'b0;
+                sub_done     <= '0;
+                sub_all_done_d <= 1'b0;
+            end
+
+            if (sub_pending && sub_ready_all) begin
+                sub_pending  <= 1'b0;
+                sub_inflight <= 1'b1;
+                sub_go       <= 1'b1;
+            end
+
+            if (sub_inflight) begin
+                for (int i = 0; i < 6; i++) begin
+                    if (!sub_done[i] && finish[i]) sub_done[i] <= 1'b1;
+                end
+                if (sub_all_done) sub_inflight <= 1'b0;
+            end
+
+            if (start_pulse) sub_all_done_d <= 1'b0;
+            else sub_all_done_d <= sub_all_done;
+        end
+    end
 
 
     logic [64-1:0] KKmatrix [0:12-1][0:12-1];
@@ -77,7 +129,7 @@ module StatePredictor #(
 
     logic sys_load_en;
     logic systolic_done;
-    assign sys_load_en = Init_Valid & (finish[0] & finish[1] & finish[2] & finish[3] & finish[4] & finish[5]);
+    assign sys_load_en = sub_all_done & ~sub_all_done_d;
     SystolicArray #(
         .DWIDTH(64),
         .N(12),
@@ -104,4 +156,5 @@ module StatePredictor #(
     assign SP_DONE = systolic_done;
 
 endmodule
+
 

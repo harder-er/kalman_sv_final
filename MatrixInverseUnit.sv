@@ -1,6 +1,5 @@
 `timescale 1ns/1ps
 `default_nettype none
-`default_nettype wire
 
 module MatrixInverseUnit #(
     parameter int DWIDTH = 64
@@ -8,10 +7,10 @@ module MatrixInverseUnit #(
     input  logic                clk,
     input  logic                rst_n,
 
-    // start（上层给 SP_Done 也行，但建议�?“start_pulse/�?pending+tp_valid�?触发�?    
+    // start（上层给 SP_Done 也行，但建议�?“start_pulse/�?pending+tp_valid�?触发�?    
     input  logic                valid,
 
-    // TimeParamsSeq ready（非常关键：time 系数没好之前不要启动 CEU�?    
+    // TimeParamsSeq ready（非常关键：time 系数没好之前不要启动 CEU�?    
     input  logic                tp_valid,
 
     // time coefficients (来自 TimeParamsSeq)
@@ -36,9 +35,14 @@ module MatrixInverseUnit #(
     output logic                finish,          // 1-cycle pulse
     output logic [DWIDTH-1:0]   inv_matrix [0:5][0:5]
 );
+    // fp_* ready wires
+    logic u_negx_ready;
+    logic u_negy_ready;
+    logic u_negz_ready;
+
 
     // ------------------------------------------------------------
-    // 0) start pending（解�?SP_Done 先到、tp_valid 后到会丢触发的问题）
+    // 0) start pending（解�?SP_Done 先到、tp_valid 后到会丢触发的问题）
     // ------------------------------------------------------------
     logic valid_d;
     logic start_pulse;
@@ -57,10 +61,10 @@ module MatrixInverseUnit #(
             else if (do_start) pending <= 1'b0;
         end
     end
-    assign do_start = pending & tp_valid;  // tp_valid 起来才真的启�?
+    assign do_start = pending & tp_valid;  // tp_valid 起来才真的启�?
     // ------------------------------------------------------------
-    // 1) CEU stage1：产�?a,b,c,d,e,f,x,y,z + valid_out
-    //    �?gated reset：未启动�?CEU 保持 reset，避免乱�?    // ------------------------------------------------------------
+    // 1) CEU stage1：产�?a,b,c,d,e,f,x,y,z + valid_out
+    //    �?gated reset：未启动�?CEU 保持 reset，避免乱�?    // ------------------------------------------------------------
     typedef enum logic [2:0] {
         S_IDLE,
         S_WAIT_STAGE1,
@@ -92,7 +96,7 @@ module MatrixInverseUnit #(
 
     wire stage1_done = got_a & got_b & got_c & got_d & got_e & got_f & got_x & got_y & got_z;
 
-    // ---- 这里保持你原来的 CEU 结构，但�?valid_out 分开、把 dt 映射修正 ----
+    // ---- 这里保持你原来的 CEU 结构，但�?valid_out 分开、把 dt 映射修正 ----
     CEU_a #(.DBL_WIDTH(64)) u_CEU_a (
         .clk        (clk),
         .rst_n      (rst_ceu1_n),
@@ -321,7 +325,7 @@ module MatrixInverseUnit #(
 
     CEU_division u_div (
         .clk        (clk),
-        //.rst_n      (rst_n),
+        .rst_n      (rst_n),
         .valid      (div_go),
         .finish     (div_finish),
         .numerator  (div_num),
@@ -337,22 +341,25 @@ module MatrixInverseUnit #(
 
     // negation by fp_suber
     logic neg_go;
+    logic neg_pending;
     logic negx_finish, negy_finish, negz_finish;
     logic [DWIDTH-1:0] n_inv_x1, n_inv_y2, n_inv_z3;
 
-    fp_suber u_negx (.clk(clk), 
+    fp_suber u_negx (.clk(clk), .rst_n(rst_n), 
     // .rst_n(rst_n), 
-    .valid(neg_go), .finish(negx_finish), .a(64'h0), .b(inv_x1), .result(n_inv_x1));
-    fp_suber u_negy (.clk(clk), 
+    .valid(neg_go), .ready  (u_negx_ready), .finish(negx_finish), .a(64'h0), .b(inv_x1), .result(n_inv_x1));
+    fp_suber u_negy (.clk(clk), .rst_n(rst_n), 
     // .rst_n(rst_n), 
-    .valid(neg_go), .finish(negy_finish), .a(64'h0), .b(inv_y2), .result(n_inv_y2));
-    fp_suber u_negz (.clk(clk), 
+    .valid(neg_go), .ready  (u_negy_ready), .finish(negy_finish), .a(64'h0), .b(inv_y2), .result(n_inv_y2));
+    fp_suber u_negz (.clk(clk), .rst_n(rst_n), 
     // rst_n(rst_n), 
     .valid(neg_go), 
-    .finish(negz_finish), .a(64'h0), .b(inv_z3), .result(n_inv_z3));
+    .ready  (u_negz_ready),
+        .finish(negz_finish), .a(64'h0), .b(inv_z3), .result(n_inv_z3));
 
     logic got_negx, got_negy, got_negz;
     wire  neg_done = got_negx & got_negy & got_negz;
+    wire  neg_ready_all = u_negx_ready & u_negy_ready & u_negz_ready;
 
     // ------------------------------------------------------------
     // 4) main FSM + latching
@@ -375,6 +382,7 @@ module MatrixInverseUnit #(
             div_all_done <= 1'b0;
 
             neg_go    <= 1'b0;
+            neg_pending <= 1'b0;
             {got_negx,got_negy,got_negz} <= '0;
 
             finish <= 1'b0;
@@ -404,6 +412,7 @@ module MatrixInverseUnit #(
                 div_idx   <= '0;
 
                 {got_negx,got_negy,got_negz} <= '0;
+                neg_pending <= 1'b0;
             end
 
             // -------- latch stage1 outputs
@@ -467,7 +476,7 @@ module MatrixInverseUnit #(
                                 div_all_done <= 1'b1;
                                 st <= S_WAIT_NEG;
                                 // kick negation (3 subers)
-                                neg_go <= 1'b1;
+                                neg_pending <= 1'b1;
                             end else begin
                                 div_idx <= div_idx + 1'b1;
                                 unique case (div_idx + 1'b1)
@@ -490,6 +499,10 @@ module MatrixInverseUnit #(
 
             // -------- wait negation completes (3 independent finishes)
             if (st == S_WAIT_NEG) begin
+                if (neg_pending && neg_ready_all) begin
+                    neg_go <= 1'b1;
+                    neg_pending <= 1'b0;
+                end
                 if (!got_negx && negx_finish) got_negx <= 1'b1;
                 if (!got_negy && negy_finish) got_negy <= 1'b1;
                 if (!got_negz && negz_finish) got_negz <= 1'b1;
@@ -542,4 +555,6 @@ module MatrixInverseUnit #(
 endmodule
 
 `default_nettype wire
+
+
 

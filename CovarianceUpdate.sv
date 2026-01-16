@@ -36,6 +36,10 @@ module CovarianceUpdate #(
     input  logic                               CKG_Done,
     output logic                               SCU_Done
 );
+    // fp_* ready wires
+    logic u_sub_ready;
+    logic u_add_ready;
+
 
     localparam logic [DWIDTH-1:0] FP_ZERO = 64'h0000_0000_0000_0000;
     localparam logic [DWIDTH-1:0] FP_ONE  = 64'h3FF0_0000_0000_0000; // 1.0
@@ -67,8 +71,10 @@ module CovarianceUpdate #(
     logic sub_valid, sub_finish;
     logic [DWIDTH-1:0] sub_a, sub_b, sub_y;
 
-    fp_suber u_sub (.clk(clk),
+    fp_suber u_sub (.clk(clk), 
+        .rst_n(rst_n),
         .valid  (sub_valid),
+        .ready  (u_sub_ready),
         .finish (sub_finish),
         .a      (sub_a),
         .b      (sub_b),
@@ -169,8 +175,11 @@ module CovarianceUpdate #(
     logic add_valid, add_finish;
     logic [DWIDTH-1:0] add_a, add_b, add_y;
 
-    fp_adder u_add (.clk(clk),
+    fp_adder u_add (
+        .clk(clk), 
+        .rst_n(rst_n),
         .valid  (add_valid),
+        .ready  (u_add_ready),
         .finish (add_finish),
         .a      (add_a),
         .b      (add_b),
@@ -340,8 +349,10 @@ module CovarianceUpdate #(
 
                 // ---- compute 6 diagonal values: diag_ikh[i] = 1 - K[i][i]
                 ST_SUB_DIAG_ISSUE: begin
-                    sub_valid <= 1'b1;
-                    st        <= ST_SUB_DIAG_WAIT;
+                    if (u_sub_ready) begin
+                        sub_valid <= 1'b1;
+                        st        <= ST_SUB_DIAG_WAIT;
+                    end
                 end
 
                 ST_SUB_DIAG_WAIT: begin
@@ -363,7 +374,7 @@ module CovarianceUpdate #(
                 end
 
                 ST_SA_KR_WAIT: begin
-                    sa_load_en <= 1'b0;  // �?拉低 load_en，允�?SystolicArray 完成
+                    sa_load_en <= 1'b0;  // �?拉低 load_en，允�?SystolicArray 完成
                     if (sa_done) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
@@ -381,7 +392,7 @@ module CovarianceUpdate #(
                 end
 
                 ST_SA_KRKt_WAIT: begin
-                    sa_load_en <= 1'b0;  // �?拉低 load_en
+                    sa_load_en <= 1'b0;  // �?拉低 load_en
                     if (sa_done) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
@@ -399,7 +410,7 @@ module CovarianceUpdate #(
                 end
 
                 ST_SA_IKHP_WAIT: begin
-                    sa_load_en <= 1'b0;  // �?拉低 load_en
+                    sa_load_en <= 1'b0;  // �?拉低 load_en
                     if (sa_done) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
@@ -417,7 +428,7 @@ module CovarianceUpdate #(
                 end
 
                 ST_SA_IKHPIKHT_WAIT: begin
-                    sa_load_en <= 1'b0;  // �?拉低 load_en
+                    sa_load_en <= 1'b0;  // �?拉低 load_en
                     if (sa_done) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
@@ -430,8 +441,10 @@ module CovarianceUpdate #(
 
                 // ---- fp add: P_kk = KRKt + IKHPIKHT (sequential 144 elems)
                 ST_ADD_ISSUE: begin
-                    add_valid <= 1'b1;
-                    st        <= ST_ADD_WAIT;
+                    if (u_add_ready) begin
+                        add_valid <= 1'b1;
+                        st        <= ST_ADD_WAIT;
+                    end
                 end
 
                 ST_ADD_WAIT: begin
@@ -468,4 +481,5 @@ module CovarianceUpdate #(
     end
 
 endmodule
+
 

@@ -13,12 +13,15 @@ module CMU_PHi44 #(
     output logic [DBL_WIDTH-1:0]   a,
     output logic                   valid_out
 );
+    // fp_* ready wires
+    logic u_add0_ready;
+
 
     // 单加
     logic add_go, add_finish;
     logic [DBL_WIDTH-1:0] add_a, add_b, add_r;
 
-    fp_adder u_add0 (.clk(clk), .valid(add_go), .finish(add_finish), .a(add_a), .b(add_b), .result(add_r));
+    fp_adder u_add0 (.clk(clk), .rst_n(rst_n), .valid(add_go), .ready  (u_add0_ready), .finish(add_finish), .a(add_a), .b(add_b), .result(add_r));
 
     typedef enum logic [1:0] {S_IDLE, S_A1} st_e;
     st_e st;
@@ -36,8 +39,10 @@ module CMU_PHi44 #(
             case (st)
                 S_IDLE: begin
                     add_a <= Theta_10_10; add_b <= Q_10_10;
-                    add_go <= 1'b1;
-                    st <= S_A1;
+                    if (u_add0_ready) begin
+                        add_go <= 1'b1;
+                        st <= S_A1;
+                    end
                 end
                 S_A1: if (add_finish) begin
                     a <= add_r;
@@ -49,4 +54,6 @@ module CMU_PHi44 #(
     end
 
 endmodule
+
+
 

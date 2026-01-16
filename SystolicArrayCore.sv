@@ -43,7 +43,7 @@ module SystolicArrayCore #(
             else if (gcol >= 6 && gcol <= 11)  col_enabled = enb_7_12;
             else                               col_enabled = 1'b0;
         end else begin
-            // 其它 N：默认全开（你也可以按需扩展�?            
+            // 其它 N：默认全开（你也可以按需扩展�?            
             col_enabled = 1'b1;
         end
     endfunction
@@ -53,6 +53,8 @@ module SystolicArrayCore #(
     // -----------------------------
     logic              mul_go;
     logic              add_go;
+    logic              mul_ready;
+    logic              add_ready;
     logic              mul_finish;
     logic              add_finish;
     logic [DWIDTH-1:0] mul_a, mul_b;
@@ -61,16 +63,21 @@ module SystolicArrayCore #(
     logic [DWIDTH-1:0] add_y;
 
     fp_multiplier u_mul (
-    .clk(clk),
+        .clk(clk),
+        .rst_n(rst_n),
         .valid  (mul_go),
+        .ready  (mul_ready),
         .finish (mul_finish),
         .a      (mul_a),
         .b      (mul_b),
         .result (mul_y)
     );
 
-    fp_adder u_add (.clk(clk),
+    fp_adder u_add (
+        .clk(clk),
+        .rst_n(rst_n),
         .valid  (add_go),
+        .ready  (add_ready),
         .finish (add_finish),
         .a      (add_a),
         .b      (add_b),
@@ -127,7 +134,7 @@ module SystolicArrayCore #(
             case (st)
                 S_IDLE: begin
                     if (start_pulse) begin
-                        // 清零输出（避免禁用列残留�?                        
+                        // 清零输出（避免禁用列残留�?                        
                         for (r = 0; r < N; r++) begin
                             for (c = 0; c < N; c++) begin
                                 c_out[r][c] <= '0;
@@ -169,8 +176,10 @@ module SystolicArrayCore #(
 
                         mul_a <= a_row[row_idx][0];
                         mul_b <= b_col[0][col_idx];
-                        mul_go <= 1'b1; // pulse
-                        st    <= S_MUL_WAIT;
+                        if (mul_ready) begin
+                            mul_go <= 1'b1; // pulse
+                            st    <= S_MUL_WAIT;
+                        end
                     end
                 end
 
@@ -178,8 +187,10 @@ module SystolicArrayCore #(
                     if (mul_finish) begin
                         add_a <= acc;
                         add_b <= mul_y;
-                        add_go <= 1'b1; // pulse
-                        st <= S_ADD_WAIT;
+                        if (add_ready) begin
+                            add_go <= 1'b1; // pulse
+                            st <= S_ADD_WAIT;
+                        end
                     end
                 end
 
@@ -194,8 +205,10 @@ module SystolicArrayCore #(
 
                             mul_a <= a_row[row_idx][k_idx + 1'b1];
                             mul_b <= b_col[k_idx + 1'b1][col_idx];
-                            mul_go <= 1'b1; // pulse
-                            st <= S_MUL_WAIT;
+                            if (mul_ready) begin
+                                mul_go <= 1'b1; // pulse
+                                st <= S_MUL_WAIT;
+                            end
                         end
                     end
                 end
@@ -218,14 +231,10 @@ module SystolicArrayCore #(
                     end
                 end
 
-                // 保持 finish �?1，直�?load_en 拉低（握手完成）
+                // finish pulse: assert for 1 cycle, independent of load_en
                 S_DONE_PULSE: begin
                     cal_finish <= 1'b1;
-                    if (!load_en) begin
-                        // load_en 已拉低，握手完成，返�?IDLE
-                        cal_finish <= 1'b0;
-                        st <= S_IDLE;
-                    end
+                    st <= S_IDLE;
                 end
 
                 default: st <= S_IDLE;
@@ -234,5 +243,6 @@ module SystolicArrayCore #(
     end
 
 endmodule
+
 
 

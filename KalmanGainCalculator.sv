@@ -51,6 +51,7 @@ module FpMulArb #(
     logic [DWIDTH-1:0] y_reg;
 
     logic mul_valid_pulse;
+    logic mul_ready;
     logic mul_finish;
     logic [DWIDTH-1:0] mul_result;
 
@@ -67,7 +68,7 @@ module FpMulArb #(
             req_ready[c]  = 1'b0;
         end
 
-        if (!busy && !resp_pending) begin
+        if (!busy && !resp_pending && mul_ready) begin
             for (int off = 0; off < NUM_CLIENTS; off++) begin
                 int idx;
                 idx = rr_ptr + off;
@@ -96,9 +97,11 @@ module FpMulArb #(
     end
 
     // multiplier instance (exactly ONE here; you can replicate this module for more)
-    fp_multiplier u_mul (.clk(clk),
-        // .rst_n  (rst_n),
+    fp_multiplier u_mul (
+        .clk(clk),
+        .rst_n  (rst_n),
         .valid  (mul_valid_pulse),
+        .ready  (mul_ready),
         .finish (mul_finish),
         .a      (a_reg),
         .b      (b_reg),
@@ -822,6 +825,7 @@ module KalmanGainCalculator #(
 
     // 乘法/加法请求脉冲
     logic mul_go, add_go;
+    logic mul_ready, add_ready;
     logic [DWIDTH-1:0] mul_a, mul_b;
     logic [DWIDTH-1:0] add_a, add_b;
     logic mul_finish;
@@ -830,16 +834,20 @@ module KalmanGainCalculator #(
     logic [DWIDTH-1:0] add_result;
 
     fp_multiplier u_kmul (.clk(clk),
+        .rst_n  (rst_n),
         .valid  (mul_go),
+        .ready  (mul_ready),
         .finish (mul_finish),
         .a      (mul_a),
         .b      (mul_b),
         .result (mul_result)
     );
 
-    fp_adder u_kadd (.clk(clk), 
-    // .rst_n(rst_n),
+    fp_adder u_kadd (
+        .clk(clk), 
+        .rst_n(rst_n), 
         .valid  (add_go),
+        .ready  (add_ready),
         .finish (add_finish),
         .a      (add_a),
         .b      (add_b),
@@ -890,8 +898,10 @@ module KalmanGainCalculator #(
                         acc_reg <= '0;
                         mul_a   <= P_predicted_HT12[0][0];
                         mul_b   <= inv_matrix12[0][0];
-                        mul_go  <= 1'b1;
-                        k_state <= K_MUL;
+                        if (mul_ready) begin
+                            mul_go  <= 1'b1;
+                            k_state <= K_MUL;
+                        end
                     end
                 end
 
@@ -899,8 +909,10 @@ module KalmanGainCalculator #(
                     if (mul_finish) begin
                         add_a  <= acc_reg;
                         add_b  <= mul_result;
-                        add_go <= 1'b1;
-                        k_state <= K_ADD;
+                        if (add_ready) begin
+                            add_go <= 1'b1;
+                            k_state <= K_ADD;
+                        end
                     end
                 end
 
@@ -910,11 +922,13 @@ module KalmanGainCalculator #(
                         if (k_idx == 3'd5) begin
                             k_state <= K_STORE;
                         end else begin
-                            k_idx   <= k_idx + 1'b1;
-                            mul_a   <= P_predicted_HT12[row_idx][k_idx + 1'b1];
-                            mul_b   <= inv_matrix12[k_idx + 1'b1][col_idx];
-                            mul_go  <= 1'b1;
-                            k_state <= K_MUL;
+                            if (mul_ready) begin
+                                k_idx   <= k_idx + 1'b1;
+                                mul_a   <= P_predicted_HT12[row_idx][k_idx + 1'b1];
+                                mul_b   <= inv_matrix12[k_idx + 1'b1][col_idx];
+                                mul_go  <= 1'b1;
+                                k_state <= K_MUL;
+                            end
                         end
                     end
                 end
@@ -925,25 +939,26 @@ module KalmanGainCalculator #(
                     k_idx   <= '0;
 
                     if (col_idx == 3'd5) begin
-                        col_idx <= '0;
                         if (row_idx == 4'd11) begin
+                            col_idx <= '0;
                             K_done  <= 1'b1;
                             k_state <= K_IDLE;
-                        end else begin
+                        end else if (mul_ready) begin
+                            col_idx <= '0;
                             row_idx <= row_idx + 1'b1;
-                            // 启动下一�?�?0 列乘�?                            
                             mul_a   <= P_predicted_HT12[row_idx + 1'b1][0];
                             mul_b   <= inv_matrix12[0][0];
                             mul_go  <= 1'b1;
                             k_state <= K_MUL;
                         end
                     end else begin
-                        col_idx <= col_idx + 1'b1;
-                        // 启动同一行下一列乘�?                        
-                        mul_a   <= P_predicted_HT12[row_idx][0];
-                        mul_b   <= inv_matrix12[0][col_idx + 1'b1];
-                        mul_go  <= 1'b1;
-                        k_state <= K_MUL;
+                        if (mul_ready) begin
+                            col_idx <= col_idx + 1'b1;
+                            mul_a   <= P_predicted_HT12[row_idx][0];
+                            mul_b   <= inv_matrix12[0][col_idx + 1'b1];
+                            mul_go  <= 1'b1;
+                            k_state <= K_MUL;
+                        end
                     end
                 end
             endcase
@@ -968,4 +983,5 @@ module KalmanGainCalculator #(
     endgenerate
 
 endmodule
+
 

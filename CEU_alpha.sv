@@ -17,6 +17,14 @@ module CEU_alpha #(
     output logic [DBL_WIDTH-1:0]   out,
     output logic                   valid_out
 );
+    // fp_* ready wires
+    logic U_mul1_ready;
+    logic U_mul2_ready;
+    logic U_sub_ready;
+
+    wire mul_ready_all = U_mul1_ready & U_mul2_ready;
+    wire sub_ready     = U_sub_ready;
+
 
     // -----------------------------
     // helpers: detect X/Z on inputs
@@ -68,25 +76,30 @@ module CEU_alpha #(
     // datapath instances
     // -----------------------------
     fp_multiplier U_mul1 (.clk(clk),
+        .rst_n  (rst_n),
         .a      (in1_lat),
         .b      (in2_lat),
         .valid  (mul_valid_r),
+        .ready  (U_mul1_ready),
         .finish (finish_mul1),
         .result (m1_w)
     );
 
     fp_multiplier U_mul2 (.clk(clk),
+        .rst_n  (rst_n),
         .a      (in3_lat),
         .b      (in3_lat),
         .valid  (mul_valid_r),
+        .ready  (U_mul2_ready),
         .finish (finish_mul2),
         .result (m2_w)
     );
 
-    fp_suber U_sub (.clk(clk),
+    fp_suber U_sub (.clk(clk), .rst_n(rst_n),
         .a      (m1_lat),
         .b      (m2_lat),
         .valid  (sub_valid_r),
+        .ready  (U_sub_ready),
         .finish (finish_sub),
         .result (diff_w)
     );
@@ -127,7 +140,7 @@ module CEU_alpha #(
             unique case (st)
                 S_IDLE: begin
                     // only start when inputs are known and changed
-                    if (inputs_known && new_sample) begin
+                    if (inputs_known && new_sample && mul_ready_all) begin
                         // latch "sample"
                         in1_lat   <= in1;
                         in2_lat   <= in2;
@@ -162,8 +175,10 @@ module CEU_alpha #(
 
                     // when both done (allow same-cycle finish)
                     if ( (mul1_done || finish_mul1) && (mul2_done || finish_mul2) ) begin
-                        sub_valid_r <= 1'b1; // fire subtract
-                        st          <= S_WAIT_SUB;
+                        if (sub_ready) begin
+                            sub_valid_r <= 1'b1; // fire subtract
+                            st          <= S_WAIT_SUB;
+                        end
                     end
                 end
 
@@ -181,4 +196,5 @@ module CEU_alpha #(
     end
 
 endmodule
+
 

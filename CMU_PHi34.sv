@@ -17,6 +17,10 @@ module CMU_PHi34 #(
     output logic [DBL_WIDTH-1:0]   a,
     output logic                   valid_out
 );
+    // fp_* ready wires
+    logic u_mul_ready;
+    logic u_add_ready;
+
 
     // 单乘 + 单加
     logic mul_go, mul_finish;
@@ -24,8 +28,8 @@ module CMU_PHi34 #(
     logic add_go, add_finish;
     logic [DBL_WIDTH-1:0] add_a, add_b, add_r;
 
-    fp_multiplier u_mul (.clk(clk), .valid(mul_go), .finish(mul_finish), .a(mul_a), .b(mul_b), .result(mul_r));
-    fp_adder u_add (.clk(clk), .valid(add_go), .finish(add_finish), .a(add_a), .b(add_b), .result(add_r));
+    fp_multiplier u_mul (.clk(clk), .rst_n(rst_n), .valid(mul_go), .ready  (u_mul_ready), .finish(mul_finish), .a(mul_a), .b(mul_b), .result(mul_r));
+    fp_adder u_add (.clk(clk), .rst_n(rst_n), .valid(add_go), .ready  (u_add_ready), .finish(add_finish), .a(add_a), .b(add_b), .result(add_r));
 
     typedef enum logic [1:0] {S_IDLE, S_A1, S_X1, S_SUM} st_e;
     st_e st;
@@ -44,18 +48,26 @@ module CMU_PHi34 #(
             case (st)
                 S_IDLE: begin
                     add_a <= Theta_7_10; add_b <= Q_7_10;
-                    add_go <= 1'b1;
-                    st <= S_A1;
+                    if (u_add_ready) begin
+                        add_go <= 1'b1;
+                        st <= S_A1;
+                    end
                 end
                 S_A1: if (add_finish) begin
                     t1 <= add_r;
-                    mul_a <= delta_t; mul_b <= Theta_10_10; mul_go <= 1'b1;
-                    st <= S_X1;
+                    mul_a <= delta_t; mul_b <= Theta_10_10;
+                    if (u_mul_ready) begin
+                        mul_go <= 1'b1;
+                        st <= S_X1;
+                    end
                 end
                 S_X1: if (mul_finish) begin
                     x1 <= mul_r;
-                    add_a <= t1; add_b <= x1; add_go <= 1'b1;
-                    st <= S_SUM;
+                    add_a <= t1; add_b <= x1;
+                    if (u_add_ready) begin
+                        add_go <= 1'b1;
+                        st <= S_SUM;
+                    end
                 end
                 S_SUM: if (add_finish) begin
                     a <= add_r;
@@ -67,4 +79,7 @@ module CMU_PHi34 #(
     end
 
 endmodule
+
+
+
 

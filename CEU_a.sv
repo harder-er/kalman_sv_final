@@ -27,6 +27,38 @@ module CEU_a #(
     output logic [DBL_WIDTH-1:0]   a_out,
     output logic                   valid_out
 );
+    // fp_* ready wires
+    logic u_add_A1_ready;
+    logic u_add_A4_ready;
+    logic u_mul_M1_ready;
+    logic u_mul_M2_ready;
+    logic u_mul_M3_ready;
+    logic u_add_A2_ready;
+    logic u_add_A3_ready;
+    logic u_mul_X1_ready;
+    logic u_mul_X2_ready;
+    logic u_mul_X3_ready;
+    logic u_mul_X4_ready;
+    logic u_mul_X5_ready;
+    logic u_mul_X6_ready;
+    logic u_add_T1_ready;
+    logic u_add_T2_ready;
+    logic u_add_T3_ready;
+    logic u_add_T4_ready;
+    logic u_add_T5_ready;
+    logic u_add_T6_ready;
+    logic u_add_out_ready;
+
+    // stage-ready gates
+    wire s1_ready   = u_add_A1_ready & u_add_A4_ready;
+    wire s2_ready   = u_mul_M1_ready & u_mul_M2_ready & u_mul_M3_ready;
+    wire s3_ready   = u_add_A2_ready & u_add_A3_ready;
+    wire s4_ready   = u_mul_X1_ready & u_mul_X2_ready & u_mul_X3_ready & u_mul_X4_ready & u_mul_X5_ready & u_mul_X6_ready;
+    wire s5_ready   = u_add_T1_ready & u_add_T2_ready;
+    wire s6_ready   = u_add_T3_ready & u_add_T4_ready;
+    wire s7_ready   = u_add_T5_ready & u_add_T6_ready;
+    wire sout_ready = u_add_out_ready;
+
 
     localparam logic [DBL_WIDTH-1:0] C_3 = 64'h4008_0000_0000_0000; // 3.0
     localparam logic [DBL_WIDTH-1:0] C_4 = 64'h4010_0000_0000_0000; // 4.0
@@ -66,33 +98,33 @@ module CEU_a #(
     // ----------------------------
     // operators
     // ----------------------------
-    fp_adder u_add_A1 (.clk(clk), .valid(v_s1), .finish(fin_A1), .a(Theta_7_1), .b(Theta_4_4), .result(A1_w));
-    fp_adder u_add_A4 (.clk(clk), .valid(v_s1), .finish(fin_A4), .a(Q_1_1),     .b(R_1_1),     .result(A4_w));
+    fp_adder u_add_A1 (.clk(clk), .rst_n(rst_n), .valid(v_s1), .ready  (u_add_A1_ready), .finish(fin_A1), .a(Theta_7_1), .b(Theta_4_4), .result(A1_w));
+    fp_adder u_add_A4 (.clk(clk), .rst_n(rst_n), .valid(v_s1), .ready  (u_add_A4_ready), .finish(fin_A4), .a(Q_1_1),     .b(R_1_1),     .result(A4_w));
 
-    fp_multiplier u_mul_M1 (.clk(clk), .valid(v_s2), .finish(fin_M1), .a(C_3), .b(Theta_7_4),  .result(M1_w));
-    fp_multiplier u_mul_M2 (.clk(clk), .valid(v_s2), .finish(fin_M2), .a(C_4), .b(Theta_10_4), .result(M2_w));
-    fp_multiplier u_mul_M3 (.clk(clk), .valid(v_s2), .finish(fin_M3), .a(C_3), .b(Theta_7_7),  .result(M3_w));
+    fp_multiplier u_mul_M1 (.clk(clk), .rst_n(rst_n), .valid(v_s2), .ready  (u_mul_M1_ready), .finish(fin_M1), .a(C_3), .b(Theta_7_4),  .result(M1_w));
+    fp_multiplier u_mul_M2 (.clk(clk), .rst_n(rst_n), .valid(v_s2), .ready  (u_mul_M2_ready), .finish(fin_M2), .a(C_4), .b(Theta_10_4), .result(M2_w));
+    fp_multiplier u_mul_M3 (.clk(clk), .rst_n(rst_n), .valid(v_s2), .ready  (u_mul_M3_ready), .finish(fin_M3), .a(C_3), .b(Theta_7_7),  .result(M3_w));
 
-    fp_adder u_add_A2 (.clk(clk), .valid(v_s3), .finish(fin_A2), .a(Theta_10_1), .b(M1), .result(A2_w));
-    fp_adder u_add_A3 (.clk(clk), .valid(v_s3), .finish(fin_A3), .a(M2),         .b(M3), .result(A3_w));
+    fp_adder u_add_A2 (.clk(clk), .rst_n(rst_n), .valid(v_s3), .ready  (u_add_A2_ready), .finish(fin_A2), .a(Theta_10_1), .b(M1), .result(A2_w));
+    fp_adder u_add_A3 (.clk(clk), .rst_n(rst_n), .valid(v_s3), .ready  (u_add_A3_ready), .finish(fin_A3), .a(M2),         .b(M3), .result(A3_w));
 
-    fp_multiplier u_mul_X1 (.clk(clk), .valid(v_s4), .finish(fin_X1), .a(dt_1), .b(Theta_4_1),  .result(X1_w));
-    fp_multiplier u_mul_X2 (.clk(clk), .valid(v_s4), .finish(fin_X2), .a(dt_2), .b(A1),         .result(X2_w));
-    fp_multiplier u_mul_X3 (.clk(clk), .valid(v_s4), .finish(fin_X3), .a(dt_3), .b(A2),         .result(X3_w));
-    fp_multiplier u_mul_X4 (.clk(clk), .valid(v_s4), .finish(fin_X4), .a(dt_4), .b(A3),         .result(X4_w));
-    fp_multiplier u_mul_X5 (.clk(clk), .valid(v_s4), .finish(fin_X5), .a(dt_5), .b(Theta_10_7), .result(X5_w));
-    fp_multiplier u_mul_X6 (.clk(clk), .valid(v_s4), .finish(fin_X6), .a(dt_6), .b(Theta_10_10),.result(X6_w));
+    fp_multiplier u_mul_X1 (.clk(clk), .rst_n(rst_n), .valid(v_s4), .ready  (u_mul_X1_ready), .finish(fin_X1), .a(dt_1), .b(Theta_4_1),  .result(X1_w));
+    fp_multiplier u_mul_X2 (.clk(clk), .rst_n(rst_n), .valid(v_s4), .ready  (u_mul_X2_ready), .finish(fin_X2), .a(dt_2), .b(A1),         .result(X2_w));
+    fp_multiplier u_mul_X3 (.clk(clk), .rst_n(rst_n), .valid(v_s4), .ready  (u_mul_X3_ready), .finish(fin_X3), .a(dt_3), .b(A2),         .result(X3_w));
+    fp_multiplier u_mul_X4 (.clk(clk), .rst_n(rst_n), .valid(v_s4), .ready  (u_mul_X4_ready), .finish(fin_X4), .a(dt_4), .b(A3),         .result(X4_w));
+    fp_multiplier u_mul_X5 (.clk(clk), .rst_n(rst_n), .valid(v_s4), .ready  (u_mul_X5_ready), .finish(fin_X5), .a(dt_5), .b(Theta_10_7), .result(X5_w));
+    fp_multiplier u_mul_X6 (.clk(clk), .rst_n(rst_n), .valid(v_s4), .ready  (u_mul_X6_ready), .finish(fin_X6), .a(dt_6), .b(Theta_10_10),.result(X6_w));
 
-    fp_adder u_add_T1 (.clk(clk), .valid(v_s5), .finish(fin_T1), .a(Theta_10_7), .b(X1), .result(T1_w));
-    fp_adder u_add_T2 (.clk(clk), .valid(v_s5), .finish(fin_T2), .a(X2),         .b(X3), .result(T2_w));
+    fp_adder u_add_T1 (.clk(clk), .rst_n(rst_n), .valid(v_s5), .ready  (u_add_T1_ready), .finish(fin_T1), .a(Theta_10_7), .b(X1), .result(T1_w));
+    fp_adder u_add_T2 (.clk(clk), .rst_n(rst_n), .valid(v_s5), .ready  (u_add_T2_ready), .finish(fin_T2), .a(X2),         .b(X3), .result(T2_w));
 
-    fp_adder u_add_T3 (.clk(clk), .valid(v_s6), .finish(fin_T3), .a(X4), .b(X5), .result(T3_w));
-    fp_adder u_add_T4 (.clk(clk), .valid(v_s6), .finish(fin_T4), .a(X6), .b(A4), .result(T4_w));
+    fp_adder u_add_T3 (.clk(clk), .rst_n(rst_n), .valid(v_s6), .ready  (u_add_T3_ready), .finish(fin_T3), .a(X4), .b(X5), .result(T3_w));
+    fp_adder u_add_T4 (.clk(clk), .rst_n(rst_n), .valid(v_s6), .ready  (u_add_T4_ready), .finish(fin_T4), .a(X6), .b(A4), .result(T4_w));
 
-    fp_adder u_add_T5 (.clk(clk), .valid(v_s7), .finish(fin_T5), .a(T1), .b(T2), .result(T5_w));
-    fp_adder u_add_T6 (.clk(clk), .valid(v_s7), .finish(fin_T6), .a(T3), .b(T4), .result(T6_w));
+    fp_adder u_add_T5 (.clk(clk), .rst_n(rst_n), .valid(v_s7), .ready  (u_add_T5_ready), .finish(fin_T5), .a(T1), .b(T2), .result(T5_w));
+    fp_adder u_add_T6 (.clk(clk), .rst_n(rst_n), .valid(v_s7), .ready  (u_add_T6_ready), .finish(fin_T6), .a(T3), .b(T4), .result(T6_w));
 
-    fp_adder u_add_out (.clk(clk), .valid(v_out), .finish(fin_OUT), .a(T5), .b(T6), .result(OUT_w));
+    fp_adder u_add_out (.clk(clk), .rst_n(rst_n), .valid(v_out), .ready  (u_add_out_ready), .finish(fin_OUT), .a(T5), .b(T6), .result(OUT_w));
 
     // ----------------------------
     // FSM
@@ -153,14 +185,24 @@ module CEU_a #(
                     st  <= S1_FIRE;
                 end
 
-                S1_FIRE: begin v_s1 <= 1'b1; st <= S1_WAIT; end
+                S1_FIRE: begin
+                    if (s1_ready) begin
+                        v_s1 <= 1'b1;
+                        st <= S1_WAIT;
+                    end
+                end
                 S1_WAIT: begin
                     if (fin_A1) begin A1 <= A1_w; dA1 <= 1'b1; end
                     if (fin_A4) begin A4 <= A4_w; dA4 <= 1'b1; end
                     if (dA1 && dA4) st <= S2_FIRE;
                 end
 
-                S2_FIRE: begin v_s2 <= 1'b1; st <= S2_WAIT; end
+                S2_FIRE: begin
+                    if (s2_ready) begin
+                        v_s2 <= 1'b1;
+                        st <= S2_WAIT;
+                    end
+                end
                 S2_WAIT: begin
                     if (fin_M1) begin M1 <= M1_w; dM1 <= 1'b1; end
                     if (fin_M2) begin M2 <= M2_w; dM2 <= 1'b1; end
@@ -168,14 +210,24 @@ module CEU_a #(
                     if (dM1 && dM2 && dM3) st <= S3_FIRE;
                 end
 
-                S3_FIRE: begin v_s3 <= 1'b1; st <= S3_WAIT; end
+                S3_FIRE: begin
+                    if (s3_ready) begin
+                        v_s3 <= 1'b1;
+                        st <= S3_WAIT;
+                    end
+                end
                 S3_WAIT: begin
                     if (fin_A2) begin A2 <= A2_w; dA2 <= 1'b1; end
                     if (fin_A3) begin A3 <= A3_w; dA3 <= 1'b1; end
                     if (dA2 && dA3) st <= S4_FIRE;
                 end
 
-                S4_FIRE: begin v_s4 <= 1'b1; st <= S4_WAIT; end
+                S4_FIRE: begin
+                    if (s4_ready) begin
+                        v_s4 <= 1'b1;
+                        st <= S4_WAIT;
+                    end
+                end
                 S4_WAIT: begin
                     if (fin_X1) begin X1 <= X1_w; dX1 <= 1'b1; end
                     if (fin_X2) begin X2 <= X2_w; dX2 <= 1'b1; end
@@ -186,28 +238,48 @@ module CEU_a #(
                     if (dX1 && dX2 && dX3 && dX4 && dX5 && dX6) st <= S5_FIRE;
                 end
 
-                S5_FIRE: begin v_s5 <= 1'b1; st <= S5_WAIT; end
+                S5_FIRE: begin
+                    if (s5_ready) begin
+                        v_s5 <= 1'b1;
+                        st <= S5_WAIT;
+                    end
+                end
                 S5_WAIT: begin
                     if (fin_T1) begin T1 <= T1_w; dT1 <= 1'b1; end
                     if (fin_T2) begin T2 <= T2_w; dT2 <= 1'b1; end
                     if (dT1 && dT2) st <= S6_FIRE;
                 end
 
-                S6_FIRE: begin v_s6 <= 1'b1; st <= S6_WAIT; end
+                S6_FIRE: begin
+                    if (s6_ready) begin
+                        v_s6 <= 1'b1;
+                        st <= S6_WAIT;
+                    end
+                end
                 S6_WAIT: begin
                     if (fin_T3) begin T3 <= T3_w; dT3 <= 1'b1; end
                     if (fin_T4) begin T4 <= T4_w; dT4 <= 1'b1; end
                     if (dT3 && dT4) st <= S7_FIRE;
                 end
 
-                S7_FIRE: begin v_s7 <= 1'b1; st <= S7_WAIT; end
+                S7_FIRE: begin
+                    if (s7_ready) begin
+                        v_s7 <= 1'b1;
+                        st <= S7_WAIT;
+                    end
+                end
                 S7_WAIT: begin
                     if (fin_T5) begin T5 <= T5_w; dT5 <= 1'b1; end
                     if (fin_T6) begin T6 <= T6_w; dT6 <= 1'b1; end
                     if (dT5 && dT6) st <= SOUT_FIRE;
                 end
 
-                SOUT_FIRE: begin v_out <= 1'b1; st <= SOUT_WAIT; end
+                SOUT_FIRE: begin
+                    if (sout_ready) begin
+                        v_out <= 1'b1;
+                        st <= SOUT_WAIT;
+                    end
+                end
                 SOUT_WAIT: begin
                     if (fin_OUT) begin
                         a_out     <= OUT_w;
@@ -227,4 +299,7 @@ module CEU_a #(
     end
 
 endmodule
+
+
+
 
