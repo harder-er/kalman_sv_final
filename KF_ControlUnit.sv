@@ -25,6 +25,16 @@ module KF_ControlUnit (
     // start latch and state tracking
     logic start_d, start_seen, has_run;
     
+    // 信号锁存：在相应状态中保持各个完成信号为高
+    logic init_valid_locked;
+    logic sp_done_locked;
+    logic ckg_done_locked;
+    logic mdi_valid_locked;
+    logic scu_done_s_locked;
+    logic scu_done_p_locked;
+    logic sco_valid_locked;
+    logic end_valid_locked;
+    
     typedef enum logic [2:0] {
         S_IDLE = 3'd0,        // 空闲/复位状态
         S_INIT = 3'd1,        // 初始化状态
@@ -42,6 +52,15 @@ module KF_ControlUnit (
             start_d    <= 1'b0;
             start_seen <= 1'b0;
             has_run    <= 1'b0;
+            // 复位时清除所有锁存信号
+            init_valid_locked   <= 1'b0;
+            sp_done_locked      <= 1'b0;
+            ckg_done_locked     <= 1'b0;
+            mdi_valid_locked    <= 1'b0;
+            scu_done_s_locked   <= 1'b0;
+            scu_done_p_locked   <= 1'b0;
+            sco_valid_locked    <= 1'b0;
+            end_valid_locked    <= 1'b0;
         end else begin
             start_d <= start;
             if (start && !start_d)
@@ -52,6 +71,75 @@ module KF_ControlUnit (
                 has_run <= 1'b1;  // set when FSM leaves IDLE
             if (finish)
                 start_seen <= 1'b0;
+
+            // ===================================================================
+            // 信号锁存逻辑：在各状态中锁存对应的完成/有效信号
+            // ===================================================================
+            
+            // 回到IDLE时，清除所有锁存信号
+            if (next_state == S_IDLE) begin
+                init_valid_locked   <= 1'b0;
+                sp_done_locked      <= 1'b0;
+                ckg_done_locked     <= 1'b0;
+                mdi_valid_locked    <= 1'b0;
+                scu_done_s_locked   <= 1'b0;
+                scu_done_p_locked   <= 1'b0;
+                sco_valid_locked    <= 1'b0;
+                end_valid_locked    <= 1'b0;
+            end else begin
+                // S_INIT 状态：锁存 Init_Valid
+                if (current_state == S_INIT) begin
+                    if (Init_Valid)
+                        init_valid_locked <= 1'b1;
+                end else if (next_state != S_INIT)
+                    init_valid_locked <= 1'b0;
+
+                // S_SP 状态：锁存 SP_Done
+                if (current_state == S_SP) begin
+                    if (SP_Done)
+                        sp_done_locked <= 1'b1;
+                end else if (next_state != S_SP)
+                    sp_done_locked <= 1'b0;
+
+                // S_CKG 状态：锁存 CKG_Done
+                if (current_state == S_CKG) begin
+                    if (CKG_Done)
+                        ckg_done_locked <= 1'b1;
+                end else if (next_state != S_CKG)
+                    ckg_done_locked <= 1'b0;
+
+                // S_MDI 状态：锁存 MDI_Valid
+                if (current_state == S_MDI) begin
+                    if (MDI_Valid)
+                        mdi_valid_locked <= 1'b1;
+                end else if (next_state != S_MDI)
+                    mdi_valid_locked <= 1'b0;
+
+                // S_SCU 状态：锁存 SCU_Done_s 和 SCU_Done_p
+                // 关键：一旦进入 SCU 状态，就开始锁存这两个信号
+                // 它们可能在不同周期到达，所以用 OR 逻辑累积
+                if (current_state == S_SCU) begin
+                    if (SCU_Done_s)
+                        scu_done_s_locked <= 1'b1;
+                    if (SCU_Done_p)
+                        scu_done_p_locked <= 1'b1;
+                end else if (next_state != S_SCU) begin
+                    // 只有当离开 SCU 状态时才清除
+                    scu_done_s_locked <= 1'b0;
+                    scu_done_p_locked <= 1'b0;
+                end
+
+                // S_SCO 状态：锁存 SCO_Valid 和 End_valid
+                if (current_state == S_SCO) begin
+                    if (SCO_Valid)
+                        sco_valid_locked <= 1'b1;
+                    if (End_valid)
+                        end_valid_locked <= 1'b1;
+                end else if (next_state != S_SCO) begin
+                    sco_valid_locked <= 1'b0;
+                    end_valid_locked <= 1'b0;
+                end
+            end
         end
     end
 
@@ -64,7 +152,7 @@ module KF_ControlUnit (
     end
 
     logic scu_done_all;
-    assign scu_done_all = SCU_Done_s & SCU_Done_p;
+    assign scu_done_all = scu_done_s_locked & scu_done_p_locked;
 
     // next_state
     always_comb begin
@@ -79,33 +167,33 @@ module KF_ControlUnit (
                     next_state = S_IDLE;
             end
 
-            // ★S_INIT: 初始化状态，等待 Init_Valid
+            // ★S_INIT: 初始化状态，等待 Init_Valid（锁存版本）
             S_INIT: begin
-                if (Init_Valid)
+                if (init_valid_locked)
                     next_state = S_SP;
                 else
                     next_state = S_INIT;
             end
 
-            // ★S_SP: State Prediction，等�?SP_Done
+            // ★S_SP: State Prediction，等待 SP_Done（锁存版本）
             S_SP: begin
-                if (SP_Done)
+                if (sp_done_locked)
                     next_state = S_CKG;
                 else
                     next_state = S_SP;
             end
 
-            // ★S_CKG: Kalman Gain Calculate，等�?CKG_Done
+            // ★S_CKG: Kalman Gain Calculate，等待 CKG_Done（锁存版本）
             S_CKG: begin
-                if (CKG_Done)
+                if (ckg_done_locked)
                     next_state = S_MDI;       // 进入 Measure Data Input
                 else
                     next_state = S_CKG;
             end
 
-            // ★S_MDI: Measure Data Input，等�?MDI_Valid（即 En_MDI�?            
+            // ★S_MDI: Measure Data Input，等待 MDI_Valid（锁存版本）
             S_MDI: begin
-                if (MDI_Valid)
+                if (mdi_valid_locked)
                     next_state = S_SCU;
                 else
                     next_state = S_MDI;
@@ -119,11 +207,11 @@ module KF_ControlUnit (
                     next_state = S_SCU;
             end
 
-            // ★S_SCO: State Covariance Output，等�?SCO_Done
+            // ★S_SCO: State Covariance Output，等待 SCO_Valid/End_valid（锁存版本）
             S_SCO: begin
-                if (SCO_Valid)
-                    next_state = S_SP;        // 输出完成，回�?State Prediction（迭代）
-                else if (End_valid)
+                if (sco_valid_locked)
+                    next_state = S_SP;        // 输出完成，回到 State Prediction（迭代）
+                else if (end_valid_locked)
                     next_state = S_IDLE;      // End_valid 返回 IDLE
                 else
                     next_state = S_SCO;

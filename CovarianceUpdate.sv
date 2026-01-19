@@ -93,6 +93,8 @@ module CovarianceUpdate #(
     // ------------------------------------------------------------
     logic sa_load_en;
     logic sa_done;
+    logic sa_done_d;
+    wire  sa_done_pulse = sa_done & ~sa_done_d;
 
     logic sa_enb_1, sa_enb_2_6, sa_enb_7_12;
 
@@ -294,6 +296,7 @@ module CovarianceUpdate #(
 
             SCU_Done   <= 1'b0;
             sa_load_en <= 1'b0;
+            sa_done_d  <= 1'b0;
             sub_valid  <= 1'b0;
             add_valid  <= 1'b0;
 
@@ -323,6 +326,7 @@ module CovarianceUpdate #(
             sa_load_en <= 1'b0;
             sub_valid  <= 1'b0;
             add_valid  <= 1'b0;
+            sa_done_d  <= sa_done;
 
             if (start) begin
                 // restart a new covariance update run
@@ -375,7 +379,7 @@ module CovarianceUpdate #(
 
                 ST_SA_KR_WAIT: begin
                     sa_load_en <= 1'b0;  // �?拉低 load_en，允�?SystolicArray 完成
-                    if (sa_done) begin
+                    if (sa_done_pulse) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
                                 KR[i][j] <= sa_c[i][j];
@@ -393,7 +397,7 @@ module CovarianceUpdate #(
 
                 ST_SA_KRKt_WAIT: begin
                     sa_load_en <= 1'b0;  // �?拉低 load_en
-                    if (sa_done) begin
+                    if (sa_done_pulse) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
                                 KRKt[i][j] <= sa_c[i][j];
@@ -411,7 +415,7 @@ module CovarianceUpdate #(
 
                 ST_SA_IKHP_WAIT: begin
                     sa_load_en <= 1'b0;  // �?拉低 load_en
-                    if (sa_done) begin
+                    if (sa_done_pulse) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
                                 IKHP[i][j] <= sa_c[i][j];
@@ -429,7 +433,7 @@ module CovarianceUpdate #(
 
                 ST_SA_IKHPIKHT_WAIT: begin
                     sa_load_en <= 1'b0;  // �?拉低 load_en
-                    if (sa_done) begin
+                    if (sa_done_pulse) begin
                         for (int i = 0; i < STATE_DIM; i++) begin
                             for (int j = 0; j < STATE_DIM; j++) begin
                                 IKHPIKHT[i][j] <= sa_c[i][j];
