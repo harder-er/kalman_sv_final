@@ -6,7 +6,7 @@ module kalman_core #(
     parameter real deltat     = 0.01,
 
     // End_valid：最后一次迭代完成后，再延迟 N 个周期才拉高
-    parameter int  END_VALID_STABLE_CYCLES = 50
+    parameter int  END_VALID_STABLE_CYCLES = 10
 )(
     input  logic                         clk,
     input  logic                         rst_n,
@@ -315,7 +315,7 @@ module kalman_core #(
         .STATE_DIM(STATE_DIM),
         .MEASURE_DIM(MEASURE_DIM),
         .DATA_WIDTH(64),
-        .MAX_ITER(50)
+        .MAX_ITER(10)
     ) u_SCO_Output (
         .clk(clk),
         .rst_n(rst_n),

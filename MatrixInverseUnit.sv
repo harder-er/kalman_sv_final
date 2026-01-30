@@ -4,33 +4,33 @@
 module MatrixInverseUnit #(
     parameter int DWIDTH = 64
 )(
-    input  logic                clk,
-    input  logic                rst_n,
+    input  wire                clk,
+    input  wire                rst_n,
 
     // start（上层给 SP_Done 也行，但建议�?“start_pulse/�?pending+tp_valid�?触发�?    
-    input  logic                valid,
+    input  wire                valid,
 
     // TimeParamsSeq ready（非常关键：time 系数没好之前不要启动 CEU�?    
-    input  logic                tp_valid,
+    input  wire                tp_valid,
 
     // time coefficients (来自 TimeParamsSeq)
-    input  logic [DWIDTH-1:0]   delta_t,
-    input  logic [DWIDTH-1:0]   delta_t2,        // 2*dt
-    input  logic [DWIDTH-1:0]   dt2,             // dt^2
-    input  logic [DWIDTH-1:0]   half_dt2,        // 1/2 dt^2
-    input  logic [DWIDTH-1:0]   half_dt3,        // 1/2 dt^3
-    input  logic [DWIDTH-1:0]   three_dt3,       // 1/3 dt^3
-    input  logic [DWIDTH-1:0]   sixth_dt3,       // 1/6 dt^3
-    input  logic [DWIDTH-1:0]   quarter_dt4,     // 1/4 dt^4
-    input  logic [DWIDTH-1:0]   twive_dt4,       // 1/12 dt^4
-    input  logic [DWIDTH-1:0]   five12_dt4,      // 5/12 dt^4
-    input  logic [DWIDTH-1:0]   six_dt5,         // 1/6 dt^5
-    input  logic [DWIDTH-1:0]   twleve_dt5,      // 1/12 dt^5
-    input  logic [DWIDTH-1:0]   thirtysix_dt6,   // 1/36 dt^6
+    input  wire [DWIDTH-1:0]   delta_t,
+    input  wire [DWIDTH-1:0]   delta_t2,        // 2*dt
+    input  wire [DWIDTH-1:0]   dt2,             // dt^2
+    input  wire [DWIDTH-1:0]   half_dt2,        // 1/2 dt^2
+    input  wire [DWIDTH-1:0]   half_dt3,        // 1/2 dt^3
+    input  wire [DWIDTH-1:0]   three_dt3,       // 1/3 dt^3
+    input  wire [DWIDTH-1:0]   sixth_dt3,       // 1/6 dt^3
+    input  wire [DWIDTH-1:0]   quarter_dt4,     // 1/4 dt^4
+    input  wire [DWIDTH-1:0]   twive_dt4,       // 1/12 dt^4
+    input  wire [DWIDTH-1:0]   five12_dt4,      // 5/12 dt^4
+    input  wire [DWIDTH-1:0]   six_dt5,         // 1/6 dt^5
+    input  wire [DWIDTH-1:0]   twleve_dt5,      // 1/12 dt^5
+    input  wire [DWIDTH-1:0]   thirtysix_dt6,   // 1/36 dt^6
 
-    input  logic [DWIDTH-1:0]   P_k1k1 [0:12-1][0:12-1],
-    input  logic [DWIDTH-1:0]   Q_k    [0:12-1][0:12-1],
-    input  logic [DWIDTH-1:0]   R_k    [0:5][0:5],
+    input  wire [DWIDTH-1:0]   P_k1k1 [0:12-1][0:12-1],
+    input  wire [DWIDTH-1:0]   Q_k    [0:12-1][0:12-1],
+    input  wire [DWIDTH-1:0]   R_k    [0:5][0:5],
 
     output logic                finish,          // 1-cycle pulse
     output logic [DWIDTH-1:0]   inv_matrix [0:5][0:5]

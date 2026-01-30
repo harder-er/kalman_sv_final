@@ -4,7 +4,7 @@ module StateCovarainceOutput #(
     parameter int  STATE_DIM   = 12,
     parameter int  MEASURE_DIM = 6,    // 目前未使用，保留接口一致性
     parameter int  DATA_WIDTH  = 64,
-    parameter int  MAX_ITER    = 50,
+    parameter int  MAX_ITER    = 10,
 
     // 输出写回内存基地址
     parameter logic [31:0] BASE_ADDR = 32'h0050_0000,
@@ -110,7 +110,12 @@ module StateCovarainceOutput #(
     logic [7:0]  beat_in_burst_r;
     logic        aw_sent_r;
 
-    // 当前 burst beats / addr
+    // 当前 burst beats / addr (寄存版本，用于关键路径)
+    logic [7:0]  cur_burst_beats_r;
+    logic [31:0] cur_burst_addr_r;
+    logic [7:0]  global_beat_r; // 用于数据 mux（跨 burst 连续），已寄存
+
+    // 组合版本（仅用于 FSM）
     logic [7:0]  cur_burst_beats;
     logic [31:0] cur_burst_addr;
     logic [7:0]  global_beat; // 用于数据 mux（跨 burst 连续）
@@ -128,7 +133,7 @@ module StateCovarainceOutput #(
     end
 
     // ------------------------------------------------------------
-    // 数据 mux：先 P_kk (144) 再 X_k1k (12)，按 global_beat 顺序打包
+    // 数据 mux：先 P_kk (144) 再 X_k1k (12)，按 global_beat_r 顺序打包
     // ------------------------------------------------------------
     logic [DATA_WIDTH-1:0] data_to_write [0:7];
 
@@ -137,15 +142,15 @@ module StateCovarainceOutput #(
             int elem_idx;
             int row, col;
 
-            if (global_beat < P_BEATS) begin
+            if (global_beat_r < P_BEATS) begin
                 // P_kk
-                elem_idx = global_beat * 8 + b; // 0..143
+                elem_idx = global_beat_r * 8 + b; // 0..143
                 row      = elem_idx / STATE_DIM;
                 col      = elem_idx % STATE_DIM;
                 data_to_write[b] = (elem_idx < P_ELEMS) ? P_kk[row][col] : '0;
             end else begin
                 // X_k1k
-                elem_idx = (global_beat - P_BEATS) * 8 + b; // 0..15
+                elem_idx = (global_beat_r - P_BEATS) * 8 + b; // 0..15
                 data_to_write[b] = (elem_idx < X_ELEMS) ? X_k1k[elem_idx] : '0;
             end
         end
@@ -215,9 +220,18 @@ module StateCovarainceOutput #(
 
             beat_in_burst_r <= 8'd0;
             aw_sent_r       <= 1'b0;
+            
+            cur_burst_beats_r <= 8'd0;
+            cur_burst_addr_r  <= 32'd0;
+            global_beat_r     <= 8'd0;
 
         end else begin
             st <= st_n;
+
+            // 将组合逻辑的结果寄存，以减少关键路径
+            cur_burst_beats_r <= cur_burst_beats;
+            cur_burst_addr_r  <= cur_burst_addr;
+            global_beat_r     <= global_beat;
 
             // 默认不改
             // --------------------------------------------------------
@@ -240,8 +254,10 @@ module StateCovarainceOutput #(
                 burst1_beats_r <= 8'd0;
 
                 // 若本次 1280B burst 会跨 4KB，则拆成两段
-                if ((offset_4k + ITER_BYTES) > 4096) begin
+                if ((offset_4k + ITER_BYTES) > 4096 && TOTAL_BEATS > 1) begin
                     b0_beats = (bytes_to_4k + BUS_BYTES - 1) / BUS_BYTES;        // 第一段 beat 数
+                    if (b0_beats < 1) b0_beats = 1;
+                    if (b0_beats >= TOTAL_BEATS) b0_beats = TOTAL_BEATS - 1;
                     has_burst1_r   <= 1'b1;
                     burst0_beats_r <= b0_beats[7:0];
                     burst1_beats_r <= (TOTAL_BEATS[7:0] - b0_beats[7:0]);

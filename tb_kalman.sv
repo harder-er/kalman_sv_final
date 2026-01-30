@@ -37,6 +37,8 @@ module tb_kalman_bd;
     // --------------------------------------------------------
     logic clk, rst_n, start;
     wire  filter_done;
+    logic filter_done_d;
+    wire  filter_done_pulse = filter_done & ~filter_done_d;
 
     // --------------------------------------------------------
     // 3) AXI Interface Signals for KalmanFilterTop_bd
@@ -240,19 +242,23 @@ module tb_kalman_bd;
         // to avoid tool parsing errors.  (SystemVerilog rule)
         string       x_init_file, p_init_file, z_meas_file, out_file;
         string       golden_file;
+        string       tb_dir;
         int unsigned timeout_cycles;
         int unsigned start_delay_cycles;
+        int unsigned b_wait_cycles;
         int          plus_ok; // for capturing $value$plusargs return value
 
         // defaults
-        x_init_file        = "x_init.hex";
-        p_init_file        = "p_init.hex";
-        z_meas_file        = "z_meas.hex";
-        out_file           = "fpga_output_x.hex";
-        golden_file        = "x_golden.hex";
+        tb_dir             = dirname(`__FILE__);
+        x_init_file        = {tb_dir, "/x_init.hex"};
+        p_init_file        = {tb_dir, "/p_init.hex"};
+        z_meas_file        = {tb_dir, "/z_meas.hex"};
+        out_file           = {tb_dir, "/fpga_output_x.hex"};
+        golden_file        = {tb_dir, "/x_golden.hex"};
         timeout_cycles     = 2_000_000_00;
 		//timeout_cycles     = 2_000;
         start_delay_cycles = 100;
+        b_wait_cycles      = 100000;
 
         // Read plusargs (accept user overrides)
         plus_ok = $value$plusargs("X_INIT=%s",      x_init_file);
@@ -262,6 +268,7 @@ module tb_kalman_bd;
         plus_ok = $value$plusargs("TIMEOUT=%d",     timeout_cycles);
         plus_ok = $value$plusargs("START_DELAY=%d", start_delay_cycles);
         plus_ok = $value$plusargs("GOLDEN=%s",      golden_file);
+        plus_ok = $value$plusargs("BWAIT=%d",       b_wait_cycles);
 
         rst_n = 1'b0;
         start = 1'b0;
@@ -291,6 +298,7 @@ module tb_kalman_bd;
                 wait (filter_done === 1'b1);
                 $display("[%0t] Filter Done!", $time);
 
+                wait_m2_write_resp(b_wait_cycles);
                 report_metrics_to_console();
                 compare_x_rmse_file(golden_file, ADDR_X_RES_BASE, 12);
             end
@@ -308,7 +316,7 @@ module tb_kalman_bd;
         dump_mem_to_file(out_file, ADDR_X_RES_BASE, 100);
 
         $display("[%0t] Testbench Completed.", $time);
-                                                                                                                                            $finish;
+        $finish;
     end
 
     // --------------------------------------------------------
@@ -401,6 +409,18 @@ module tb_kalman_bd;
         return v && r;
     endfunction
 
+    function automatic string dirname(input string path);
+        int last;
+        last = -1;
+        for (int i = 0; i < path.len(); i++) begin
+            if ((path[i] == 8'h2f) || (path[i] == 8'h5c))
+                last = i;
+        end
+        if (last > 0) return path.substr(0, last-1);
+        if (last == 0) return path.substr(0, 0);
+        return ".";
+    endfunction
+
     // --------------------
     // AXI counters
     // --------------------
@@ -439,12 +459,14 @@ module tb_kalman_bd;
             done_seen   <= 1'b0;
             start_cycle <= 0;
             done_cycle  <= 0;
+            filter_done_d <= 1'b0;
         end else begin
+            filter_done_d <= filter_done;
             if (!started && start) begin
                 started     <= 1'b1;
                 start_cycle <= cycle_cnt;
             end
-            if (started && !done_seen && filter_done) begin
+            if (!done_seen && filter_done_pulse) begin
                 done_seen  <= 1'b1;
                 done_cycle <= cycle_cnt;
             end
@@ -501,6 +523,19 @@ module tb_kalman_bd;
                      i, sse, rmse, golden_file);
         end else begin
             $display("[RMSE] ERROR: no samples compared.");
+        end
+    endtask
+
+    task automatic wait_m2_write_resp(input int max_cycles);
+        int cnt;
+        cnt = 0;
+        while (cnt < max_cycles && (m2_aw_cnt != m2_b_cnt)) begin
+            @(posedge clk);
+            cnt++;
+        end
+        if (m2_aw_cnt != m2_b_cnt) begin
+            $display("[WARN] m2 write responses pending: AW=%0d B=%0d after %0d cycles",
+                     m2_aw_cnt, m2_b_cnt, max_cycles);
         end
     endtask
 

@@ -7,7 +7,8 @@ module KalmanFilterTop #(
     parameter int  MAX_ITERATIONS = 100,
 
     // ★End_valid 触发门限（由 core 内部实现：all_Z_k_read 连续�?的周期数�?    
-    parameter int  END_VALID_STABLE_CYCLES = 50
+    // parameter int  END_VALID_STABLE_CYCLES = 50
+    parameter int  END_VALID_STABLE_CYCLES = 10
 ) ( 
     // system
     input  logic clk,
